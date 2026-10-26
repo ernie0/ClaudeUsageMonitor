@@ -2,20 +2,26 @@ using System.Drawing;
 
 namespace ClaudeUsageMonitor;
 
-/// <summary>What the small workflow window shows besides the conversations.</summary>
-internal sealed record WorkflowMiniData(string Folder, string Mode, IReadOnlyList<ClaudeSession> Sessions, ClaudeSession? ReplyTo);
+/// <summary>
+/// What the small workflow window shows: the folder and mode for new work, its own conversations, the ones
+/// open in VS Code or a terminal, and what the line will go to (a reply, or a copy of an open conversation).
+/// </summary>
+internal sealed record WorkflowMiniData(string Folder, string Mode, IReadOnlyList<ClaudeSession> Sessions, ClaudeSession? ReplyTo,
+    IReadOnlyList<LiveSession> Live, LiveSession? Resume);
 
 /// <summary>
 /// The small workflow window, as compact as the overlay: one line to type an instruction, the folder and
 /// permission mode under it, and — only while there are conversations — one short row per conversation
 /// with its status, the latest step or reply, and the buttons that matter now (allow/deny, stop, reply,
-/// close). Rows slide in; the status ring turns while Claude works.
-/// Actions: folder, mode, detail, hide, allow:{i}, deny:{i}, stop:{i}, reply:{i}, close:{i}, open:{i}.
+/// close). Under them, conversations open in VS Code or a terminal that are working or were active in
+/// the last two hours, each with 「接手」 to continue a copy of it here. Rows slide in; the status ring turns
+/// while Claude works.
+/// Actions: folder, mode, detail, hide, allow:{i}, deny:{i}, stop:{i}, reply:{i}, close:{i}, open:{i}, resume:{i}.
 /// </summary>
 internal static class WorkflowMini
 {
     public const float Width = 400;
-    const float M = 12, RowH = 76, MaxRows = 5;
+    const float M = 12, RowH = 76, MaxRows = 5, LiveH = 46, MaxLive = 4;
 
     /// <summary>Draws the window and returns its height; <paramref name="input"/> is where the host puts its text box.</summary>
     public static float Render(IPaint p, PageState state, WorkflowMiniData d, out RectangleF input)
@@ -23,7 +29,9 @@ internal static class WorkflowMini
         state.BeginFrame();
         var m = state.Motion;
         var shown = d.Sessions.Reverse().Take((int)MaxRows).ToList();
-        float height = 92 + shown.Count * (RowH + 8) + (d.Sessions.Count > MaxRows ? 24 : 0) + (shown.Count > 0 ? 4 : 0);
+        var live = d.Live.Take((int)MaxLive).ToList();
+        float height = 92 + shown.Count * (RowH + 8) + (d.Sessions.Count > MaxRows ? 24 : 0)
+            + (live.Count > 0 ? 28 + live.Count * (LiveH + 6) : 0) + (shown.Count + live.Count > 0 ? 4 : 0);
         var all = new RectangleF(0, 0, Width, height);
         p.Gradient(all, PageKit.PageTop, PageKit.PageBottom, 0, vertical: true);
         p.Circle(new PointF(Width * 0.85f, -20), 120, PageKit.WithAlpha(PageKit.Violet, 22));
@@ -37,12 +45,12 @@ internal static class WorkflowMini
         PageKit.Field(p, field, m.HoverOf("input", field), sheen: false);
         state.Hits.Add(new Hit(field, "input"));
         input = RectangleF.Inflate(field, -12, -8);
-        if (d.ReplyTo is { } target)
+        if (d.ReplyTo != null || d.Resume != null)
         {
-            // Replying: a small tag says to which conversation.
-            string tag = "回覆";
+            // Replying or continuing another conversation: a small tag says so.
+            string tag = d.ReplyTo != null ? "回覆" : "接手";
             float tw = p.Measure(tag, 8.5f, bold: true) + 14;
-            p.Fill(new RectangleF(field.Right - tw - 6, field.Y + 8, tw, 20), PageKit.WithAlpha(PageKit.Green, 70), 10);
+            p.Fill(new RectangleF(field.Right - tw - 6, field.Y + 8, tw, 20), PageKit.WithAlpha(d.ReplyTo != null ? PageKit.Green : PageKit.Violet, 90), 10);
             p.Text(tag, new RectangleF(field.Right - tw - 6, field.Y + 8, tw, 20), 8.5f, PageKit.Text, bold: true, align: TextAlign.Center, middle: true);
             input.Width -= tw + 8;
         }
@@ -63,8 +71,52 @@ internal static class WorkflowMini
             ry += RowH + 8;
         }
         if (d.Sessions.Count > MaxRows)
+        {
             p.Text($"還有 {d.Sessions.Count - MaxRows} 個工作，按「詳細」查看", new RectangleF(M, ry - 4, Width - M * 2, 20), 8.5f, PageKit.Muted, align: TextAlign.Center);
+            ry += 24;
+        }
+        if (live.Count > 0)
+        {
+            p.Text("VS Code／終端機裡開著的對話　接手會另開分身，原對話不受影響", new RectangleF(M + 2, ry, Width - M * 2, 22), 8.5f, PageKit.Muted, middle: true);
+            ry += 28;
+            for (int i = 0; i < live.Count; i++)
+            {
+                Live(p, state, live[i], i, new RectangleF(M, ry, Width - M * 2, LiveH), d.Resume?.SessionId == live[i].SessionId);
+                ry += LiveH + 6;
+            }
+        }
         return height;
+    }
+
+    /// <summary>A conversation open elsewhere: title, where and how recently, and 「接手」.</summary>
+    static void Live(IPaint p, PageState state, LiveSession s, int index, RectangleF r, bool chosen)
+    {
+        var m = state.Motion;
+        var area = RectangleF.Inflate(r, 6, 12);
+        float enter = Motion.Out(m.In("live:" + s.SessionId, area, 80, 420));
+        using var entering = PageKit.Enter(p, enter, 0, -8);
+        var color = s.Busy ? PageKit.Violet : PageKit.Muted;
+        p.Gradient(r, PageKit.WithAlpha(PageKit.PanelTop, 190), PageKit.WithAlpha(PageKit.PanelBottom, 210), 12, vertical: true);
+        PageKit.GlassSheen(p, r, 12, 0.6f);
+        p.Stroke(r, chosen ? PageKit.WithAlpha(PageKit.Violet, 230) : PageKit.Hex(0x343A66), chosen ? 1.8f : 1.1f, 12);
+
+        // A still ring: these can stay busy for hours elsewhere, and the window must not keep redrawing for them.
+        var dot = new PointF(r.X + 16, r.Y + 15);
+        p.Circle(dot, 4, color);
+        if (s.Busy)
+            p.Circle(dot, 8, null, PageKit.WithAlpha(color, 170), 1.6f);
+
+        string action = "resume:" + index;
+        string text = chosen ? "已選" : "接手";
+        float bw = PageKit.ButtonWidth(p, text, null, 9f);
+        var b = new RectangleF(r.Right - 8 - bw, r.Y + (r.Height - 26) / 2, bw, 26);
+        var (h, sweep) = state.Over(action, b);
+        PageKit.Button(p, state.Hits, action, b, text, null, chosen, h, sweep, points: 9f);
+
+        p.Text(s.Title, new RectangleF(r.X + 30, r.Y + 4, b.Left - r.X - 36, 22), 9.5f, PageKit.Text, bold: true, middle: true);
+        var ago = DateTimeOffset.UtcNow - s.Active;
+        string when = s.Busy ? "工作中" : ago.TotalMinutes < 1 ? "剛剛" : $"{(int)ago.TotalMinutes} 分鐘前";
+        p.Text($"{s.From} · {Path.GetFileName(Path.TrimEndingDirectorySeparator(s.Folder))} · {when}", new RectangleF(r.X + 30, r.Y + 24, b.Left - r.X - 36, 18), 8.5f, PageKit.Muted, middle: true);
     }
 
     /// <summary>A small text link with an optional icon; returns its right edge.</summary>

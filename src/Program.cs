@@ -237,6 +237,29 @@ internal static class Program
             File.AppendAllText(log, $"hello.txt after deny: {File.ReadAllText(Path.Combine(work, "hello.txt"))}\n");
             Grab(mini, Path.Combine(folder, "workflow-mini-deny.png"), settleMs: 300);
         }
+        // Conversations open in VS Code or a terminal (real ones on this computer), and aiming at one.
+        mini.RefreshLive();
+        Pump(2500);
+        Grab(mini, Path.Combine(folder, "workflow-mini-live.png"), settleMs: 300);
+        mini.Act("resume:0");
+        Grab(mini, Path.Combine(folder, "workflow-mini-resume.png"), settleMs: 300);
+        mini.Aim(null);
+        // With CLAUDE_USAGE_MONITOR_TEST_RESUME="<session id>|<folder>" (a small saved test conversation), continue a copy of it.
+        if (live && Environment.GetEnvironmentVariable("CLAUDE_USAGE_MONITOR_TEST_RESUME")?.Split('|') is [var id, var where])
+        {
+            string log = Path.Combine(folder, "workflow-live.txt");
+            mini.Aim(new LiveSession(id, "測試對話", where, false, DateTimeOffset.UtcNow, "測試"));
+            mini.Prepare(work, "我剛剛說我在整理的專案叫什麼名字？只回答名稱。");
+            var copy = mini.Submit()!;
+            var clock = Stopwatch.StartNew();
+            while (copy.State != JobState.Waiting && clock.Elapsed < TimeSpan.FromSeconds(120))
+                Pump(100);
+            var (lines, _) = copy.Snapshot();
+            File.AppendAllText(log, $"resume copy: state {copy.State} after {clock.Elapsed.TotalSeconds:0.0} s, folder {copy.Folder == where}, reply: {lines.LastOrDefault(l => l.Kind == JobLineKind.Claude)?.Text}\n");
+            Grab(mini, Path.Combine(folder, "workflow-mini-resumed.png"), settleMs: 300);
+            service.Workflows.Close(copy);
+            Pump(300);
+        }
         var full = WorkflowForm.Open(service);
         full.StartPosition = FormStartPosition.Manual;
         full.Location = new Point(520, 40);

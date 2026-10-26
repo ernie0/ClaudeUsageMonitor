@@ -161,6 +161,30 @@ internal static class MacScreenshots
             await Task.Delay(400);
             Save(mini, Path.Combine(folder, "workflow-mini-deny.png"));
         }
+        // Conversations open in VS Code or a terminal (real ones on this computer), and aiming at one.
+        mini.RefreshLive();
+        await Task.Delay(2500);
+        Save(mini, Path.Combine(folder, "workflow-mini-live.png"));
+        mini.Act("resume:0");
+        await Task.Delay(300);
+        Save(mini, Path.Combine(folder, "workflow-mini-resume.png"));
+        mini.Aim(null);
+        // With CLAUDE_USAGE_MONITOR_TEST_RESUME="<session id>|<folder>" (a small saved test conversation), continue a copy of it.
+        if (live && Environment.GetEnvironmentVariable("CLAUDE_USAGE_MONITOR_TEST_RESUME")?.Split('|') is [var id, var where])
+        {
+            mini.Aim(new LiveSession(id, "測試對話", where, false, DateTimeOffset.UtcNow, "測試"));
+            mini.Prepare(work, "我剛剛說我在整理的專案叫什麼名字？只回答名稱。");
+            var copy = mini.Submit()!;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (copy.State != JobState.Waiting && clock.Elapsed < TimeSpan.FromSeconds(120))
+                await Task.Delay(100);
+            var (lines, _) = copy.Snapshot();
+            File.AppendAllText(Path.Combine(folder, "workflow-live.txt"), $"resume copy: state {copy.State} after {clock.Elapsed.TotalSeconds:0.0} s, folder {copy.Folder == where}, reply: {lines.LastOrDefault(l => l.Kind == JobLineKind.Claude)?.Text}\n");
+            await Task.Delay(400);
+            Save(mini, Path.Combine(folder, "workflow-mini-resumed.png"));
+            service.Workflows.Close(copy);
+            await Task.Delay(300);
+        }
         var detail = shell.OpenWorkflowDetail();
         await Task.Delay(600);
         Save(detail, Path.Combine(folder, live ? "workflow-detail.png" : "workflow.png"));

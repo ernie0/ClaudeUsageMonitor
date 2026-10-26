@@ -57,10 +57,15 @@ internal sealed class ClaudeSession : IDisposable
     readonly StringBuilder live = new();
     int requests;
 
-    public ClaudeSession(string exe, string folder, string mode, string prompt)
+    /// <param name="from">
+    /// A conversation open elsewhere to continue: Claude Code resumes it as a new copy (--fork-session), so
+    /// the original in VS Code or the terminal is left as it is.
+    /// </param>
+    public ClaudeSession(string exe, string folder, string mode, string prompt, LiveSession? from = null)
     {
         Folder = folder;
         Mode = PermissionModes.Of(mode).Id;
+        From = from;
         Title = Summarize(prompt, 40);
         var info = new ProcessStartInfo(exe)
         {
@@ -81,6 +86,13 @@ internal sealed class ClaudeSession : IDisposable
         info.ArgumentList.Add(Mode);
         foreach (string argument in ExtraArguments)
             info.ArgumentList.Add(argument);
+        if (from != null)
+        {
+            info.ArgumentList.Add("--resume");
+            info.ArgumentList.Add(from.SessionId);
+            info.ArgumentList.Add("--fork-session");
+            Add(JobLineKind.Note, $"接手「{from.Title}」到目前為止的對話（另開分身，原本的對話不受影響）");
+        }
         process = Process.Start(info) ?? throw new MonitorException("START_FAILED");
         _ = Task.Run(() => Drain(process.StandardError));
         _ = Task.Run(ReadLoop);
@@ -93,6 +105,9 @@ internal sealed class ClaudeSession : IDisposable
 
     public string Folder { get; }
     public string Mode { get; }
+
+    /// <summary>The conversation this one continues a copy of, if any.</summary>
+    public LiveSession? From { get; }
     public string Title { get; }
     public JobState State { get; private set; } = JobState.Starting;
     public PermissionAsk? Ask { get; private set; }
@@ -373,9 +388,9 @@ internal sealed class WorkflowHub(Func<string?> configuredPath) : IDisposable
     public bool NeedsAnswer => Sessions.Any(s => s.State == JobState.NeedsPermission);
 
     /// <summary>Starts a new conversation; the claude executable is signature-checked like the usage queries.</summary>
-    public ClaudeSession Start(string folder, string mode, string prompt)
+    public ClaudeSession Start(string folder, string mode, string prompt, LiveSession? from = null)
     {
-        var session = new ClaudeSession(ClaudeLocator.FindVerified(configuredPath()), folder, mode, prompt);
+        var session = new ClaudeSession(ClaudeLocator.FindVerified(configuredPath()), folder, mode, prompt, from);
         session.Changed += () => Changed?.Invoke();
         lock (sessions)
             sessions.Add(session);
@@ -397,6 +412,129 @@ internal sealed class WorkflowHub(Func<string?> configuredPath) : IDisposable
             session.Dispose();
         lock (sessions)
             sessions.Clear();
+    }
+}
+
+/// <summary>A Claude Code conversation open elsewhere (VS Code or a terminal).</summary>
+internal sealed record LiveSession(string SessionId, string Title, string Folder, bool Busy, DateTimeOffset Active, string From);
+
+/// <summary>Conversations open in VS Code or a terminal, from Claude Code's own list of running sessions.</summary>
+internal static class LiveSessions
+{
+    /// <summary>
+    /// Interactive conversations whose Claude Code is still running and that are working now or did something
+    /// in the last two hours, newest first. Reads ~/.claude/sessions/*.json for the id, folder, name, status,
+    /// times and where it was opened (never the .key files or the messaging socket), and for a title the
+    /// newest "custom-title" or "ai-title" record near the end of the conversation's transcript.
+    /// </summary>
+    public static List<LiveSession> Load()
+    {
+        string config = Path.GetDirectoryName(TokenLedger.DefaultRoot())!;
+        string dir = Path.Combine(config, "sessions");
+        if (!Directory.Exists(dir))
+            return [];
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromHours(2);
+        var list = new List<LiveSession>();
+        foreach (var file in new DirectoryInfo(dir).EnumerateFiles("*.json"))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file.FullName));
+                var e = doc.RootElement;
+                string Text(string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+                long Number(string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+                if (Text("kind") != "interactive" || Text("sessionId").Length == 0 || !Directory.Exists(Text("cwd")) || !Alive((int)Number("pid")))
+                    continue;
+                bool busy = Text("status") == "busy";
+                var active = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(Number("updatedAt"), Number("statusUpdatedAt")));
+                if (!busy && active < cutoff)
+                    continue;
+                string title = TitleOf(config, Text("sessionId"))
+                    ?? (Text("nameSource") != "derived" && Text("name").Length > 0 ? Text("name") : Path.GetFileName(Path.TrimEndingDirectorySeparator(Text("cwd"))) + " 的對話");
+                string from = Text("entrypoint") switch
+                {
+                    "claude-vscode" => "VS Code",
+                    "cli" => "終端機",
+                    var other => other.Length > 0 ? other : "Claude Code",
+                };
+                list.Add(new LiveSession(Text("sessionId"), title, Text("cwd"), busy, active, from));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+            }
+        }
+        return list.OrderByDescending(s => s.Busy).ThenByDescending(s => s.Active).ToList();
+    }
+
+    static bool Alive(int pid)
+    {
+        if (pid <= 0)
+            return false;
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    static readonly Dictionary<string, (long Length, string? Title)> titles = [];
+
+    /// <summary>
+    /// The newest title record in the last part of the transcript (the user's own title wins); read again
+    /// only when the transcript has grown.
+    /// </summary>
+    static string? TitleOf(string config, string sessionId)
+    {
+        string projects = Path.Combine(config, "projects");
+        if (!Directory.Exists(projects))
+            return null;
+        var file = Directory.EnumerateDirectories(projects).Select(d => Path.Combine(d, sessionId + ".jsonl")).FirstOrDefault(File.Exists);
+        if (file == null)
+            return null;
+        long length = new FileInfo(file).Length;
+        lock (titles)
+        {
+            if (titles.TryGetValue(sessionId, out var known) && known.Length == length)
+                return known.Title;
+        }
+        try
+        {
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            stream.Seek(Math.Max(0, stream.Length - 512 * 1024), SeekOrigin.Begin);
+            using var reader = new StreamReader(stream);
+            string? custom = null, ai = null;
+            while (reader.ReadLine() is { } line)
+            {
+                if (line.Contains("\"custom-title\""))
+                    custom = Field(line, "customTitle") ?? custom;
+                else if (line.Contains("\"ai-title\""))
+                    ai = Field(line, "aiTitle") ?? ai;
+            }
+            lock (titles)
+                titles[sessionId] = (length, custom ?? ai);
+            return custom ?? ai;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    static string? Field(string line, string name)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            return doc.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } text ? text : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
 

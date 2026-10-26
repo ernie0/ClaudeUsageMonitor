@@ -34,8 +34,12 @@ internal sealed class WorkflowMiniWindow : Window
         MinHeight = 0,
         VerticalContentAlignment = VerticalAlignment.Center,
     };
+    readonly DispatcherTimer liveTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     List<ClaudeSession> sessions = [];
+    List<LiveSession> live = [];
+    string liveSeen = "";
     ClaudeSession? replyTo;
+    LiveSession? resume;
     string folder, mode;
 
     public WorkflowMiniWindow(MonitorService service, MacShell shell)
@@ -80,6 +84,32 @@ internal sealed class WorkflowMiniWindow : Window
             service.Settings.WorkflowX = Position.X;
             service.Settings.WorkflowY = Position.Y;
         };
+        // Conversations open elsewhere are looked up while the window shows, every few seconds.
+        liveTimer.Tick += (_, _) => RefreshLive();
+        Opened += (_, _) => RefreshLive();
+        PropertyChanged += (_, e) =>
+        {
+            if (e.Property != IsVisibleProperty)
+                return;
+            liveTimer.IsEnabled = IsVisible;
+            if (IsVisible)
+                RefreshLive();
+        };
+        Closed += (_, _) => liveTimer.Stop();
+    }
+
+    /// <summary>Reads the open conversations off the UI thread; repaints only when the list changed.</summary>
+    internal async void RefreshLive()
+    {
+        var list = await Task.Run(LiveSessions.Load);
+        string seen = string.Join("|", list.Select(s => $"{s.SessionId}{s.Busy}{s.Title}{(int)(DateTimeOffset.UtcNow - s.Active).TotalMinutes}"));
+        if (seen == liveSeen)
+            return;
+        liveSeen = seen;
+        live = list;
+        if (resume != null && live.All(s => s.SessionId != resume.SessionId))
+            Target(null);
+        page.InvalidateVisual();
     }
 
     void OnKey(object? sender, KeyEventArgs e)
@@ -92,7 +122,7 @@ internal sealed class WorkflowMiniWindow : Window
         else if (e.Key == Key.Escape)
         {
             e.Handled = true;
-            if (replyTo != null)
+            if (replyTo != null || resume != null)
                 Target(null);
             else
                 Hide();
@@ -128,7 +158,7 @@ internal sealed class WorkflowMiniWindow : Window
         sessions = service.Workflows.Sessions.ToList();
         if (replyTo != null && !sessions.Contains(replyTo))
             Target(null);
-        float height = WorkflowMini.Render(paint, state, new WorkflowMiniData(folder, mode, sessions, replyTo), out var box);
+        float height = WorkflowMini.Render(paint, state, new WorkflowMiniData(folder, mode, sessions, replyTo, live, resume), out var box);
         Dispatcher.UIThread.Post(() =>
         {
             Canvas.SetLeft(input, box.X);
@@ -139,6 +169,9 @@ internal sealed class WorkflowMiniWindow : Window
                 Height = height;
         });
     }
+
+    /// <summary>Aims the line at a conversation open elsewhere (null: new work); used by --screenshot.</summary>
+    internal void Aim(LiveSession? open) => Target(null, open);
 
     /// <summary>Sets the folder and the instruction; used by --screenshot.</summary>
     internal void Prepare(string path, string text)
@@ -160,17 +193,22 @@ internal sealed class WorkflowMiniWindow : Window
             Target(null);
             return target;
         }
-        if (!Directory.Exists(folder))
+        string where = resume?.Folder ?? folder;
+        if (!Directory.Exists(where))
         {
             MacDialog.Show(this, "Claude 工作流", "找不到這個資料夾，請重新選擇。");
             return null;
         }
         try
         {
-            var session = service.Workflows.Start(folder, mode, text);
+            var session = service.Workflows.Start(where, mode, text, resume);
             input.Text = "";
-            service.Settings.WorkflowFolder = folder;
-            service.SaveSettings();
+            if (resume == null)
+            {
+                service.Settings.WorkflowFolder = folder;
+                service.SaveSettings();
+            }
+            Target(null);
             return session;
         }
         catch (MonitorException e)
@@ -180,15 +218,17 @@ internal sealed class WorkflowMiniWindow : Window
         }
     }
 
-    void Target(ClaudeSession? session)
+    /// <summary>What the line goes to: a reply to one of these conversations, a copy of one open elsewhere, or (null) new work.</summary>
+    void Target(ClaudeSession? session, LiveSession? open = null)
     {
         replyTo = session;
+        resume = open;
         ShowPlaceholder();
         page.InvalidateVisual();
     }
 
-    void ShowPlaceholder() => input.Watermark = replyTo is { } s
-        ? $"回覆「{s.Title}」…（Esc 取消）"
+    void ShowPlaceholder() => input.Watermark = replyTo is { } s ? $"回覆「{s.Title}」…（Esc 取消）"
+        : resume is { } r ? $"接手「{r.Title}」：要 Claude 接著做什麼？（Esc 取消）"
         : "要 Claude 做什麼？（Enter 送出）";
 
     internal void Act(string action)
@@ -228,6 +268,10 @@ internal sealed class WorkflowMiniWindow : Window
                 break;
             case "close" when session != null:
                 service.Workflows.Close(session);
+                break;
+            case "resume" when colon > 0 && int.TryParse(action[(colon + 1)..], out int k) && k >= 0 && k < live.Count:
+                Target(null, live[k]);
+                FocusInput();
                 break;
         }
     }

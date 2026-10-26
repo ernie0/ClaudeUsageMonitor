@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>ClaudeUsageMonitor</RootNamespace>
     <AssemblyName>ClaudeUsageMonitor</AssemblyName>
-    <Version>0.5.1</Version>
+    <Version>0.5.2</Version>
     <Product>ClaudeUsageMonitor</Product>
     <Description>Claude 額度小幫手（非官方）</Description>
     <Copyright>Copyright (c) 2026 ernie0</Copyright>
