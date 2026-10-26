@@ -114,8 +114,29 @@ internal static class Program
         {
             history.Show();
             Application.DoEvents();
-            history.Settle();
+            Frames(history, history.View, "history", [300, 700, 1200]);
+            Hover(history, history.View, "see:stat:1", Path.Combine(folder, "history-hover-stat.png"));
+            Hover(history, history.View, null, null);
             Grab(history, Path.Combine(folder, "history.png"));
+            // The crosshair follows the pointer across the curve without leaving a trail.
+            history.View.RecordScreen();
+            foreach (float x in new[] { 300f, 420f, 560f })
+            {
+                history.View.PointerAt(new PointF(x, 520));
+                for (int i = 0; i < 12; i++)
+                {
+                    Pump(15);
+                    history.View.PaintRecorded();
+                }
+            }
+            using (var picture = history.View.StopRecording()!)
+                picture.Clone(new Rectangle(0, 0, picture.Width, Math.Min(picture.Height, history.ClientSize.Height)), picture.PixelFormat).Save(Path.Combine(folder, "history-pointer-live.png"), ImageFormat.Png);
+            history.View.PointerAt(null);
+            var cpu = Process.GetCurrentProcess().TotalProcessorTime;
+            Pump(2000);
+            var idle = Process.GetCurrentProcess().TotalProcessorTime - cpu;
+            File.AppendAllText(Path.Combine(folder, "paint-timing.txt"),
+                $"history idle 2 s: {idle.TotalMilliseconds:0} ms CPU, animating: {history.View.Motion.Active} {history.View.Motion.Dirty}\nhistory frame: {FrameCost(history.View):0.0} ms\n");
             history.Close();
         }
         using (var details = new DetailsForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) })
@@ -131,7 +152,7 @@ internal static class Program
             var cpu = Process.GetCurrentProcess().TotalProcessorTime;
             Pump(2000);
             File.AppendAllText(Path.Combine(folder, "paint-timing.txt"),
-                $"details idle 2 s: {(Process.GetCurrentProcess().TotalProcessorTime - cpu).TotalMilliseconds:0} ms CPU, animating: {details.View.Motion.Active}\n");
+                $"details idle 2 s: {(Process.GetCurrentProcess().TotalProcessorTime - cpu).TotalMilliseconds:0} ms CPU, animating: {details.View.Motion.Active} {details.View.Motion.Dirty}\n");
             details.Close();
         }
         var analysis = new AnalysisForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) };
@@ -141,6 +162,9 @@ internal static class Program
         Hover(analysis, analysis.View, "see:day:3", Path.Combine(folder, "analysis-hover-day.png"));
         Hover(analysis, analysis.View, "see:heat:2:14", Path.Combine(folder, "analysis-hover-heat.png"));
         Hover(analysis, analysis.View, null, null);
+        // With the real clock, frames repaint only what moved, as on screen: the tooltip must still be complete.
+        Live(analysis, analysis.View, "see:heat:0:22", Path.Combine(folder, "analysis-hover-live.png"));
+        Live(analysis, analysis.View, null, Path.Combine(folder, "analysis-unhover-live.png"));
         Grab(analysis, Path.Combine(folder, "analysis.png"));
         analysis.SaveFullPage(Path.Combine(folder, "analysis-full.png"));
         File.AppendAllText(Path.Combine(folder, "paint-timing.txt"), $"analysis frame: {FrameCost(analysis.View):0.0} ms\n");
@@ -193,6 +217,25 @@ internal static class Program
             Grab(form, path, settleMs: 150);
         }
         view.Motion.Time = null;
+    }
+
+    /// <summary>
+    /// Points at an area with the real clock and records what the screen would show after 0.8 s, painting
+    /// whole once and then only what the view invalidates (PrintWindow would repaint everything).
+    /// </summary>
+    static void Live(Form form, GlassView view, string? action, string path)
+    {
+        view.RecordScreen();
+        view.PointAt(action);
+        for (int i = 0; i < 55; i++)
+        {
+            Pump(15);
+            view.PaintRecorded();
+        }
+        using var picture = view.StopRecording()!;
+        int visible = Math.Min(picture.Height, form.ClientSize.Height);
+        using var crop = picture.Clone(new Rectangle(0, -view.Top, picture.Width, Math.Min(visible, picture.Height + view.Top)), picture.PixelFormat);
+        crop.Save(path, ImageFormat.Png);
     }
 
     /// <summary>Average time to paint a control once (DrawToBitmap, 20 frames).</summary>

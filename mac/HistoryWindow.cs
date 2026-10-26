@@ -1,11 +1,8 @@
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
 using SD = System.Drawing;
 
 namespace ClaudeUsageMonitor;
@@ -54,14 +51,18 @@ internal sealed class HistoryWindow : Window
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Content = new Panel { Children = { page, overlay } },
         };
-        Opened += (_, _) => Reload(scanTokens: true);
+        Opened += (_, _) =>
+        {
+            page.PlayIntro();
+            Reload(scanTokens: true, replay: false);
+        };
         Action onChanged = () => Dispatcher.UIThread.Post(() =>
         {
             var observed = service.Current?.ObservedAt;
             if (observed == lastObserved)
                 return;
             lastObserved = observed;
-            Reload(scanTokens: false);
+            Reload(scanTokens: false, replay: false);
         });
         service.Changed += onChanged;
         Closed += (_, _) => service.Changed -= onChanged;
@@ -74,15 +75,20 @@ internal sealed class HistoryWindow : Window
     /// <summary>Shows one window's curve (from a card or row on the details dashboard).</summary>
     public void Select(string windowId)
     {
+        if (windowId == state.Window)
+            return;
         state.Window = windowId;
-        Reload(scanTokens: false);
+        Reload(scanTokens: false, replay: true);
     }
 
-    async void Reload(bool scanTokens)
+    /// <summary>Loads the rows again; <paramref name="replay"/> plays the entrance for a new range or window (header and toolbar stay).</summary>
+    async void Reload(bool scanTokens, bool replay)
     {
         Data = HistoryData.Load(service, state, DateTimeOffset.UtcNow);
+        if (replay)
+            page.Motion.Restart("top", "toolbar");
         page.InvalidateMeasure();
-        page.PlayIntro();
+        page.InvalidateVisual();
         if (scanTokens)
         {
             await service.ScanTokensAsync((int)Math.Ceiling(state.Range.TotalDays));
@@ -105,16 +111,17 @@ internal sealed class HistoryWindow : Window
         if (action.StartsWith("range:"))
         {
             state.Range = TimeSpan.FromDays(int.Parse(action["range:".Length..]));
-            Reload(scanTokens: true);
+            Reload(scanTokens: true, replay: true);
         }
         else if (action.StartsWith("window:"))
         {
             state.Window = action["window:".Length..];
-            Reload(scanTokens: false);
+            Reload(scanTokens: false, replay: true);
         }
         else if (action == "sort")
         {
             state.NewestFirst = !state.NewestFirst;
+            page.Motion.Replay("rows");
             page.InvalidateVisual();
         }
         else if (action == "search")
@@ -151,94 +158,27 @@ internal sealed class HistoryWindow : Window
         }
     }
 
-    /// <summary>Finishes the chart's draw-in at once; used by --screenshot.</summary>
+    /// <summary>Shows every entrance at its end at once; used by --screenshot.</summary>
     internal void Settle() => page.Settle();
 }
 
-/// <summary>Draws the history page with Avalonia.</summary>
-internal sealed class HistoryPageControl : Control
+/// <summary>Draws the history page with Avalonia through the shared layout and animation clock.</summary>
+internal sealed class HistoryPageControl(HistoryWindow owner) : GlassControl
 {
-    readonly HistoryWindow owner;
-    readonly DispatcherTimer frame = new() { Interval = TimeSpan.FromMilliseconds(16) };
-    readonly Stopwatch intro = new();
-    readonly PictureCache cache = new();
-
-    public HistoryPageControl(HistoryWindow owner)
-    {
-        this.owner = owner;
-        DetachedFromVisualTree += (_, _) => cache.Dispose();
-        frame.Tick += (_, _) =>
-        {
-            double t = Math.Min(1, intro.ElapsedMilliseconds / 700.0);
-            owner.State.Intro = (float)(1 - Math.Pow(1 - t, 3));
-            InvalidateVisual();
-            if (t >= 1)
-            {
-                frame.Stop();
-                intro.Reset();
-            }
-        };
-    }
-
-    public void PlayIntro()
-    {
-        if (!MacShell.AnimationsEnabled)
-            return;
-        owner.State.Intro = 0;
-        intro.Restart();
-        frame.Start();
-    }
-
-    public void Settle()
-    {
-        frame.Stop();
-        owner.State.Intro = 1;
-        InvalidateVisual();
-    }
-
     protected override Size MeasureOverride(Size availableSize)
     {
         double width = double.IsInfinity(availableSize.Width) ? 1240 : availableSize.Width;
         return new Size(width, owner.Data == null ? 900 : HistoryPage.Height(owner.Data, owner.State));
     }
 
-    public override void Render(DrawingContext ctx)
+    protected override void Draw(IPaint paint, float width)
     {
         if (owner.Data == null)
             return;
-        double viewHeight = (this.GetVisualParent()?.GetVisualParent() as Visual)?.Bounds.Height ?? Bounds.Height;
-        HistoryPage.Render(new AvaloniaPaint(ctx, cache, TopLevel.GetTopLevel(this)?.RenderScaling ?? 1), (float)Bounds.Width, (float)Math.Max(Bounds.Height, viewHeight), owner.Service, owner.Data, owner.State, DateTimeOffset.UtcNow);
+        HistoryPage.Render(paint, width, (float)Math.Max(Bounds.Height, ViewHeight), owner.Service, owner.Data, owner.State, State, DateTimeOffset.UtcNow);
         var box = owner.State.SearchBox;
         Dispatcher.UIThread.Post(() => owner.PlaceSearch(box));
     }
 
-    protected override void OnPointerMoved(PointerEventArgs e)
-    {
-        base.OnPointerMoved(e);
-        var at = e.GetPosition(this);
-        var point = new SD.PointF((float)at.X, (float)at.Y);
-        string? hit = owner.State.HitAt(point);
-        Cursor = hit != null ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
-        owner.State.Hover = hit;
-        owner.State.Pointer = point;
-        InvalidateVisual();
-    }
-
-    protected override void OnPointerExited(PointerEventArgs e)
-    {
-        base.OnPointerExited(e);
-        owner.State.Hover = null;
-        owner.State.Pointer = null;
-        InvalidateVisual();
-    }
-
-    protected override void OnPointerPressed(PointerPressedEventArgs e)
-    {
-        base.OnPointerPressed(e);
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            return;
-        var at = e.GetPosition(this);
-        if (owner.State.HitAt(new SD.PointF((float)at.X, (float)at.Y)) is { } action)
-            owner.Act(action);
-    }
+    protected override void Act(string action) => owner.Act(action);
 }

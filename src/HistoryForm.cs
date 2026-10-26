@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace ClaudeUsageMonitor;
 
 /// <summary>The history page (layout in Core/HistoryPage.cs) with scrolling, hover, a search box and CSV export.</summary>
@@ -27,12 +25,16 @@ internal sealed class HistoryForm : Form
         if (open is not { IsDisposed: false })
         {
             open = new HistoryForm(service);
+            if (windowId != null)
+                open.state.Window = windowId;
             open.Show();
         }
-        if (windowId != null)
+        else if (windowId != null && windowId != open.state.Window)
+        {
             open.state.Window = windowId;
+            open.Reload(scanTokens: false, replay: true);
+        }
         open.Activate();
-        open.Reload(scanTokens: false);
     }
 
     internal HistoryForm(MonitorService service)
@@ -57,7 +59,11 @@ internal sealed class HistoryForm : Form
         scroller.Resize += (_, _) => view.Fit(scroller.ClientSize);
         Controls.Add(scroller);
 
-        Load += (_, _) => Reload(scanTokens: true);
+        Load += (_, _) =>
+        {
+            view.PlayIntro();
+            Reload(scanTokens: true, replay: false);
+        };
         HandleCreated += (_, _) =>
         {
             Theme.ApplyWindowChrome(this);
@@ -69,7 +75,7 @@ internal sealed class HistoryForm : Form
             if (!IsHandleCreated || IsDisposed || observed == lastObserved)
                 return;
             lastObserved = observed;
-            BeginInvoke(() => Reload(scanTokens: false));
+            BeginInvoke(() => Reload(scanTokens: false, replay: false));
         };
         service.Changed += onChanged;
         FormClosed += (_, _) => service.Changed -= onChanged;
@@ -79,12 +85,15 @@ internal sealed class HistoryForm : Form
     internal HistoryState State => state;
     internal HistoryData? Data => data;
     internal TextBox Search => search;
+    internal HistoryView View => view;
 
-    async void Reload(bool scanTokens)
+    /// <summary>Loads the rows again; <paramref name="replay"/> plays the entrance for a new range or window (header and toolbar stay).</summary>
+    async void Reload(bool scanTokens, bool replay)
     {
         data = HistoryData.Load(service, state, DateTimeOffset.UtcNow);
+        if (replay)
+            view.Motion.Restart("top", "toolbar");
         view.Fit(scroller.ClientSize);
-        view.PlayIntro();
         if (scanTokens)
         {
             await service.ScanTokensAsync((int)Math.Ceiling(state.Range.TotalDays));
@@ -100,16 +109,17 @@ internal sealed class HistoryForm : Form
         if (action.StartsWith("range:"))
         {
             state.Range = TimeSpan.FromDays(int.Parse(action["range:".Length..]));
-            Reload(scanTokens: true);
+            Reload(scanTokens: true, replay: true);
         }
         else if (action.StartsWith("window:"))
         {
             state.Window = action["window:".Length..];
-            Reload(scanTokens: false);
+            Reload(scanTokens: false, replay: true);
         }
         else if (action == "sort")
         {
             state.NewestFirst = !state.NewestFirst;
+            view.Motion.Replay("rows");
             view.Invalidate();
         }
         else if (action == "search")
@@ -145,43 +155,13 @@ internal sealed class HistoryForm : Form
         }
     }
 
-    /// <summary>Finishes the chart's draw-in at once; used by --screenshot.</summary>
+    /// <summary>Shows every entrance at its end at once; used by --screenshot.</summary>
     internal void Settle() => view.Settle();
 }
 
-/// <summary>Draws the history page with GDI+ and keeps the search box on its drawn frame.</summary>
-internal sealed class HistoryView : Control
+/// <summary>Draws the history page with GDI+ through the shared layout and keeps the search box on its drawn frame.</summary>
+internal sealed class HistoryView(HistoryForm owner) : GlassView
 {
-    readonly HistoryForm owner;
-    readonly System.Windows.Forms.Timer frame = new() { Interval = 16 };
-    readonly Stopwatch intro = new();
-    readonly PaintCache cache = new();
-
-    public HistoryView(HistoryForm owner)
-    {
-        this.owner = owner;
-        DoubleBuffered = true;
-        BackColor = PageKit.PageTop;
-        frame.Tick += (_, _) =>
-        {
-            double t = Math.Min(1, intro.ElapsedMilliseconds / 700.0);
-            owner.State.Intro = (float)(1 - Math.Pow(1 - t, 3));
-            Invalidate();
-            if (t >= 1)
-            {
-                frame.Stop();
-                intro.Reset();
-            }
-        };
-        Disposed += (_, _) =>
-        {
-            frame.Dispose();
-            cache.Dispose();
-        };
-    }
-
-    float UiScale => DeviceDpi / 96f;
-
     public void Fit(Size client)
     {
         if (owner.Data == null)
@@ -191,60 +171,17 @@ internal sealed class HistoryView : Control
         Invalidate();
     }
 
-    public void PlayIntro()
-    {
-        if (!Theme.AnimationsEnabled)
-            return;
-        owner.State.Intro = 0;
-        intro.Restart();
-        frame.Start();
-    }
-
-    public void Settle()
-    {
-        frame.Stop();
-        owner.State.Intro = 1;
-        Invalidate();
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
+    protected override void Draw(IPaint paint, float width)
     {
         if (owner.Data == null)
             return;
-        var g = e.Graphics;
-        TilePainter.Prepare(g);
-        using (var paint = new GdiPaint(g, UiScale, cache))
-            HistoryPage.Render(paint, Width / UiScale, Height / UiScale, owner.Service, owner.Data, owner.State, DateTimeOffset.UtcNow);
+        HistoryPage.Render(paint, width, Math.Max(Height / UiScale, ViewHeight), owner.Service, owner.Data, owner.State, State, DateTimeOffset.UtcNow);
         var box = owner.State.SearchBox;
         var bounds = new Rectangle((int)(box.X * UiScale), (int)(box.Y * UiScale + (box.Height * UiScale - owner.Search.Height) / 2),
             (int)(box.Width * UiScale), owner.Search.Height);
         if (owner.Search.Bounds != bounds)
-            owner.Search.Bounds = bounds;
+            BeginInvoke(() => owner.Search.Bounds = bounds);
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
-    {
-        base.OnMouseMove(e);
-        var point = new PointF(e.X / UiScale, e.Y / UiScale);
-        string? hit = owner.State.HitAt(point);
-        Cursor = hit != null ? Cursors.Hand : Cursors.Default;
-        owner.State.Hover = hit;
-        owner.State.Pointer = point;
-        Invalidate();
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        owner.State.Hover = null;
-        owner.State.Pointer = null;
-        Invalidate();
-    }
-
-    protected override void OnMouseClick(MouseEventArgs e)
-    {
-        base.OnMouseClick(e);
-        if (e.Button == MouseButtons.Left && owner.State.HitAt(new PointF(e.X / UiScale, e.Y / UiScale)) is { } action)
-            owner.Act(action);
-    }
+    protected override void Act(string action) => owner.Act(action);
 }

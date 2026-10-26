@@ -10,6 +10,19 @@ internal sealed class PageState
     public bool SourceOpen;
     public readonly List<Hit> Hits = [];
 
+    /// <summary>The part of the page that follows the pointer itself (a chart crosshair); hosts repaint it as the pointer moves.</summary>
+    public RectangleF PointerArea;
+
+    /// <summary>Starts a frame: clears what the last one registered and advances the animation clock.</summary>
+    public void BeginFrame()
+    {
+        Hits.Clear();
+        PointerArea = RectangleF.Empty;
+        Motion.BeginFrame();
+    }
+
+    public RectangleF BoundsOf(string? action) => Hits.FirstOrDefault(h => h.Action == action)?.Bounds ?? RectangleF.Empty;
+
     public string? Hover
     {
         get => Motion.Hover;
@@ -58,12 +71,11 @@ internal static class DetailsPage
 
     public static void Render(IPaint p, float width, float viewHeight, MonitorService service, PageState state, DateTimeOffset now)
     {
-        state.Hits.Clear();
+        state.BeginFrame();
         var m = state.Motion;
-        m.BeginFrame();
         var snapshot = service.Current;
         float height = Math.Max(viewHeight, Height(service, state));
-        p.Cached("page", new SizeF(width, height), b => PageKit.Background(b, width, height));
+        PageKit.Backdrop(p, width, height);
 
         // Header: drops into place while the sunburst turns in; it keeps turning while querying.
         var top = new RectangleF(0, 0, width, 90);

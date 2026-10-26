@@ -95,7 +95,11 @@ internal abstract class GlassControl : Control
         var point = new SD.PointF((float)at.X, (float)at.Y);
         string? hit = State.HitAt(point);
         Cursor = PageState.Clickable(hit) ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+        // The part that follows the pointer (a chart crosshair) repaints as the pointer moves.
+        bool follows = State.PointerArea.Contains(point) || State.Pointer is { } before && State.PointerArea.Contains(before);
         State.Pointer = point;
+        if (follows)
+            InvalidateVisual();
         if (hit != State.Hover)
         {
             State.Hover = hit;

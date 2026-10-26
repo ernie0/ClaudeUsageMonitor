@@ -12,6 +12,9 @@ internal abstract class GlassView : Control
     readonly System.Windows.Forms.Timer frame = new() { Interval = 15 };
     readonly PaintCache cache = new();
     protected readonly PageState State = new();
+    Bitmap? screen;
+    Rectangle recorded;
+    RectangleF overlays;
 
     protected GlassView()
     {
@@ -58,15 +61,62 @@ internal abstract class GlassView : Control
         Invalidate();
     }
 
-    protected override void OnPaint(PaintEventArgs e)
+    protected override void OnPaint(PaintEventArgs e) => PaintPage(e.Graphics);
+
+    /// <summary>
+    /// --screenshot: from now on also paints into a picture the way the screen gets it — whole once, then
+    /// only the regions the view invalidates — so partial repaints can be checked.
+    /// </summary>
+    internal void RecordScreen()
     {
-        var g = e.Graphics;
+        screen?.Dispose();
+        screen = new Bitmap(Width, Height);
+        using (var g = Graphics.FromImage(screen))
+            PaintPage(g);
+        recorded = Rectangle.Empty;
+    }
+
+    /// <summary>Paints what was invalidated since the last call into the recorded picture.</summary>
+    internal void PaintRecorded()
+    {
+        if (screen == null || recorded.IsEmpty)
+            return;
+        var region = recorded;
+        recorded = Rectangle.Empty;
+        using var g = Graphics.FromImage(screen);
+        g.SetClip(region);
+        PaintPage(g);
+    }
+
+    /// <summary>Ends recording; returns the picture.</summary>
+    internal Bitmap? StopRecording()
+    {
+        var picture = screen;
+        screen = null;
+        return picture;
+    }
+
+    protected override void OnInvalidated(InvalidateEventArgs e)
+    {
+        base.OnInvalidated(e);
+        if (screen != null)
+            recorded = recorded.IsEmpty ? e.InvalidRect : Rectangle.Union(recorded, e.InvalidRect);
+    }
+
+    void PaintPage(Graphics g)
+    {
         TilePainter.Prepare(g);
         float s = UiScale;
         // The part of the page the scroller shows; sections below it enter when they scroll in.
         Motion.Viewport = new RectangleF(0, -Top / s, Width / s, ViewHeight);
         using (var paint = new GdiPaint(g, s, cache))
             Draw(paint, Width / s);
+        // A tooltip that appeared, moved or went away may lie outside what was just repainted.
+        if (Motion.Overlays != overlays)
+        {
+            Invalidate(Pixels(Motion.Join(overlays, Motion.Overlays)));
+            overlays = Motion.Overlays;
+        }
         if (Motion.Active)
             frame.Start();
     }
@@ -83,23 +133,36 @@ internal abstract class GlassView : Control
         var point = new PointF(e.X / UiScale, e.Y / UiScale);
         string? hit = State.HitAt(point);
         Cursor = PageState.Clickable(hit) ? Cursors.Hand : Cursors.Default;
-        State.Pointer = point;
-        if (hit != State.Hover)
-        {
-            State.Hover = hit;
-            Invalidate();
-        }
+        MovePointer(point);
+        SetHover(hit);
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        State.Pointer = null;
-        if (State.Hover != null)
-        {
-            State.Hover = null;
-            Invalidate();
-        }
+        MovePointer(null);
+        SetHover(null);
+    }
+
+    /// <summary>Repaints only the part of the page that follows the pointer (a chart crosshair), not the page.</summary>
+    void MovePointer(PointF? point)
+    {
+        var area = State.PointerArea;
+        bool follows = point is { } now && area.Contains(now) || State.Pointer is { } before && area.Contains(before);
+        State.Pointer = point;
+        if (follows)
+            Invalidate(Pixels(area));
+    }
+
+    /// <summary>Repaints the two areas whose hover changes; what moves after that is repainted frame by frame.</summary>
+    void SetHover(string? hit)
+    {
+        if (hit == State.Hover)
+            return;
+        var area = Motion.Join(State.BoundsOf(State.Hover), State.BoundsOf(hit));
+        State.Hover = hit;
+        if (!area.IsEmpty)
+            Invalidate(Pixels(RectangleF.Inflate(area, 16, 16)));
     }
 
     protected override void OnMouseClick(MouseEventArgs e)
@@ -110,10 +173,13 @@ internal abstract class GlassView : Control
     }
 
     /// <summary>Acts as if the pointer were over <paramref name="action"/>'s area (null: off the page); used by --screenshot.</summary>
-    internal void PointAt(string? action)
+    internal void PointAt(string? action) => SetHover(action);
+
+    /// <summary>Moves the pointer as the mouse would (page coordinates, null: off the page); used by --screenshot.</summary>
+    internal void PointerAt(PointF? point)
     {
-        State.Hover = action;
-        Invalidate();
+        MovePointer(point);
+        SetHover(point is { } at ? State.HitAt(at) : null);
     }
 }
 

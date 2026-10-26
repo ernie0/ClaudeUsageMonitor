@@ -41,6 +41,30 @@ internal static class PageKit
         _ => (Hex(0x334155), Hex(0x1E293B), Hex(0x94A3B8)),
     };
 
+    /// <summary>
+    /// The page backdrop, kept as a picture by the host. Long pages (hundreds of history rows) get the lit
+    /// backdrop down to <paramref name="cap"/> and the plain bottom colour below, so the picture stays small.
+    /// </summary>
+    public static void Backdrop(IPaint p, float width, float height, float cap = 1800)
+    {
+        float lit = Math.Min(height, cap);
+        p.Cached("page", new SizeF(width, lit), b => Background(b, width, lit));
+        if (height > lit)
+            p.Fill(new RectangleF(0, lit, width, height - lit), PageBottom);
+    }
+
+    /// <summary>A small glass field (date range, search, sort); <paramref name="sheen"/> off where a text box sits inside.</summary>
+    public static void Field(IPaint p, RectangleF r, float hover = 0, bool sheen = true)
+    {
+        Glow(p, r, 12, Violet, (int)(45 * hover));
+        p.Fill(r, Mix(Hex(0x161A36, 230), Hex(0x20244A, 240), hover), 12);
+        if (sheen)
+            GlassSheen(p, r, 12, 0.55f);
+        else
+            p.Line(new PointF(r.X + 12, r.Y + 1.2f), new PointF(r.Right - 12, r.Y + 1.2f), Color.FromArgb(90, 255, 255, 255), 1.1f);
+        p.Stroke(r, Mix(Hex(0x343A66), WithAlpha(Violet, 210), hover), 1.1f, 12);
+    }
+
     public static void Background(IPaint p, float width, float height)
     {
         p.Gradient(new RectangleF(0, 0, width, height), PageTop, PageBottom, vertical: true);
@@ -184,10 +208,10 @@ internal static class PageKit
     /// A floating glass tooltip above <paramref name="anchor"/> (below when there is no room), kept inside
     /// <paramref name="bounds"/>; <paramref name="t"/> fades and lifts it in.
     /// </summary>
-    public static void Tooltip(IPaint p, PointF anchor, IReadOnlyList<(string Text, Color Color, bool Bold)> lines, Color light, RectangleF bounds, float t)
+    public static RectangleF Tooltip(IPaint p, PointF anchor, IReadOnlyList<(string Text, Color Color, bool Bold)> lines, Color light, RectangleF bounds, float t)
     {
         if (t <= 0 || lines.Count == 0)
-            return;
+            return RectangleF.Empty;
         float w = lines.Max(l => p.Measure(l.Text, 10, l.Bold)) + 30;
         float h = lines.Count * 21 + 16;
         var box = new RectangleF(Math.Clamp(anchor.X - w / 2, bounds.Left + 4, Math.Max(bounds.Left + 4, bounds.Right - w - 4)), anchor.Y - h - 12, w, h);
@@ -206,6 +230,8 @@ internal static class PageKit
                 y += 21;
             }
         }
+        // Where it may be drawn while it lifts in, glow included.
+        return RectangleF.Inflate(box, 8, 12);
     }
 
     /// <summary>Tinted glass card: translucent colour over the page light, glass sheen, and a glow in the level's light colour.</summary>

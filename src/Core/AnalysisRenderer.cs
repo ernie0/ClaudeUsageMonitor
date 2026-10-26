@@ -118,11 +118,9 @@ internal static class AnalysisRenderer
 
     public static float Render(IPaint p, float width, PageState state, AnalysisData d)
     {
-        state.Hits.Clear();
+        state.BeginFrame();
         var m = state.Motion;
-        m.BeginFrame();
-        // Tall enough for any range; the host scrolls whatever the page uses.
-        p.Cached("page", new SizeF(width, BackdropHeight), b => PageKit.Background(b, width, BackdropHeight));
+        PageKit.Backdrop(p, width, BackdropHeight);
         var tips = new List<Action>();
         float w = width - M * 2;
         float y = Header(p, state, d, width);
@@ -300,7 +298,7 @@ internal static class AnalysisRenderer
                 if (day.Partial)
                     lines.Add(("* 有一部分發生在工具沒開時", AnalysisPalette.Muted, false));
                 var anchor = new PointF(cx, top - 4);
-                tips.Add(() => PageKit.Tooltip(p, anchor, lines, light, bounds, hover));
+                tips.Add(() => m.Follow(PageKit.Tooltip(p, anchor, lines, light, bounds, hover)));
             }
         }
         if (!a.HasData)
@@ -377,7 +375,7 @@ internal static class AnalysisRenderer
                         (points > 0 ? $"用掉本週額度 {points:0.#} 點" : "這個時段沒有用量", points > 0 ? color : AnalysisPalette.Muted, points > 0),
                     };
                     var anchor = new PointF(drawn.X + drawn.Width / 2, drawn.Top - 2);
-                    tips.Add(() => PageKit.Tooltip(p, anchor, lines, t > 0 ? color : PageKit.Violet, bounds, hover));
+                    tips.Add(() => m.Follow(PageKit.Tooltip(p, anchor, lines, t > 0 ? color : PageKit.Violet, bounds, hover)));
                 }
             }
         }

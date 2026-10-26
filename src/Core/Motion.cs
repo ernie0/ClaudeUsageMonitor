@@ -31,8 +31,23 @@ internal sealed class Motion
     /// <summary>The part of the page on screen, in page coordinates; sections outside it wait to enter.</summary>
     public RectangleF Viewport = new(0, 0, 100_000, 100_000);
 
-    /// <summary>A fixed time in milliseconds instead of the clock; --screenshot uses it to capture frames.</summary>
-    public double? Time;
+    /// <summary>
+    /// A fixed time in milliseconds instead of the clock; --screenshot uses it to capture frames. Clearing it
+    /// lets the clock run on from that time, so it never goes backwards.
+    /// </summary>
+    public double? Time
+    {
+        get => fixedTime;
+        set
+        {
+            if (value == null && fixedTime is { } t)
+                offset = t - clock.Elapsed.TotalMilliseconds;
+            fixedTime = value;
+        }
+    }
+
+    double? fixedTime;
+    double offset;
 
     /// <summary>Whether the last render had anything moving.</summary>
     public bool Active { get; private set; }
@@ -40,7 +55,10 @@ internal sealed class Motion
     /// <summary>What moved in the last render (page coordinates).</summary>
     public RectangleF Dirty { get; private set; }
 
-    double Now => Time ?? clock.Elapsed.TotalMilliseconds;
+    /// <summary>Where the last render drew floating things (tooltips) that are not tied to a hit area.</summary>
+    public RectangleF Overlays { get; private set; }
+
+    double Now => fixedTime ?? clock.Elapsed.TotalMilliseconds + offset;
 
     /// <summary>Plays the entrance again (window opened, range changed), except for the groups to keep.</summary>
     public void Restart(params string[] keep)
@@ -67,6 +85,7 @@ internal sealed class Motion
         restarted = false;
         Active = false;
         Dirty = RectangleF.Empty;
+        Overlays = RectangleF.Empty;
         if (Hover != lastHover)
         {
             if (Hover != null)
@@ -88,8 +107,24 @@ internal sealed class Motion
     void Mark(RectangleF area)
     {
         Active = true;
-        Dirty = Dirty.IsEmpty ? area : RectangleF.Union(Dirty, area);
+        Dirty = Join(Dirty, area);
     }
+
+    /// <summary>
+    /// Registers a floating thing drawn this frame (a tooltip): it is repainted with whatever moves, and the
+    /// host repaints it when it appears, moves or goes away.
+    /// </summary>
+    public void Follow(RectangleF area)
+    {
+        if (area.IsEmpty)
+            return;
+        Overlays = Join(Overlays, area);
+        if (Active)
+            Dirty = Join(Dirty, area);
+    }
+
+    /// <summary>Union that ignores empty rectangles.</summary>
+    public static RectangleF Join(RectangleF a, RectangleF b) => a.IsEmpty ? b : b.IsEmpty ? a : RectangleF.Union(a, b);
 
     /// <summary>
     /// Linear entrance progress (0..1) of an element of <paramref name="group"/>, which waits
