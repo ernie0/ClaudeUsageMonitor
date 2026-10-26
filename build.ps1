@@ -14,6 +14,10 @@ dotnet publish $project -c Release -r win-x64 --self-contained true `
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)" }
 
 Copy-Item (Join-Path $root 'README.md'), (Join-Path $root 'THIRD_PARTY_NOTICES.md') $publish
+# README images, so the copy inside the zip is illustrated too.
+$shots = Join-Path $publish 'docs\screenshots'
+New-Item -ItemType Directory -Force $shots | Out-Null
+Copy-Item (Join-Path $root 'docs\screenshots\*.png') $shots
 
 $zip = Join-Path $dist "ClaudeUsageMonitor-v$version-win-x64.zip"
 Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $zip -Force

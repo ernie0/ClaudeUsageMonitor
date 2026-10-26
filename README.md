@@ -11,6 +11,44 @@
 - 只用 API 金鑰、Bedrock、Vertex 等登入方式沒有「方案額度」，本工具會顯示原因後停止查詢。
 - 只在瀏覽器登入 claude.ai 不夠；本工具是透過電腦上的 Claude Code 查詢。
 
+## 畫面
+
+以下截圖都是用 `--screenshot` 的示範資料產生，不是真實帳號。
+
+**標準浮窗**：左兩塊是 5 小時與本週額度，右側小卡是各模型的本週額度，底部一句話講結論。
+
+![標準浮窗](docs/screenshots/overlay-settled.png)
+
+**小動畫**：額度重置時噴紙屑並浮出「+60% 已恢復」、用掉額度時浮出「−1%」、滑鼠指到的卡片會浮起。
+
+![小動畫](docs/screenshots/overlay-effects.png)
+
+**精簡浮窗**：只顯示比較緊的那個額度。
+
+![精簡浮窗](docs/screenshots/overlay-compact.png)
+
+**使用紀錄**：曲線顏色跟著剩餘量變化，橘、紅區是偏低與告急，斜線是工具沒開著的時段。
+
+![使用紀錄](docs/screenshots/history.png)
+
+**額度詳情**：每個額度的重置時間、使用速度、照目前速度會不會用完、每小時可用多少；資料來源預設收起。
+
+![額度詳情](docs/screenshots/details.png)
+
+**設定**
+
+![設定](docs/screenshots/settings.png)
+
+## 安裝、更新與移除
+
+| 項目 | 說明 |
+| --- | --- |
+| 版本 | 0.1.0（第一版） |
+| 安裝 | 解壓縮 `ClaudeUsageMonitor-v0.1.0-win-x64.zip` 到固定資料夾（例如 `D:\工具\ClaudeUsageMonitor`），雙擊 `ClaudeUsageMonitor.exe`。可對照同名 `.sha256` 檔核對 SHA-256。 |
+| 開機自動啟動 | 設定 →「登入 Windows 時自動啟動」（寫入目前使用者的啟動項目，不需要系統管理員）。 |
+| 更新 | 先從選單「離開」，用新版 exe 覆蓋舊檔再開啟。設定與紀錄存在 `%LOCALAPPDATA%\ClaudeUsageMonitor`，不在 exe 旁邊，更新不會動到。 |
+| 移除 | 先在設定取消開機自動啟動、從選單「離開」，再刪除程式資料夾；要連紀錄一起刪就刪 `%LOCALAPPDATA%\ClaudeUsageMonitor`。 |
+
 ## 怎麼用
 
 1. 解壓縮後雙擊 `ClaudeUsageMonitor.exe`（不需要另裝 .NET，也不需要系統管理員權限）。
