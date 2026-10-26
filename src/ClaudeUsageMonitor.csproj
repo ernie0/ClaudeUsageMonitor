@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ClaudeUsageMonitor</RootNamespace>
+    <AssemblyName>ClaudeUsageMonitor</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <Product>ClaudeUsageMonitor</Product>
+    <Description>Claude 額度小幫手（非官方）</Description>
+    <Copyright>Copyright (c) 2026 ernie0</Copyright>
+    <NeutralLanguage>zh-TW</NeutralLanguage>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SatelliteResourceLanguages>zh-Hant</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\app.ico" LogicalName="ClaudeUsageMonitor.app.ico" />
+  </ItemGroup>
+
+</Project>

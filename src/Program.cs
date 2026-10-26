@@ -1,0 +1,189 @@
+using System.Diagnostics;
+using System.Drawing.Imaging;
+using System.Text.Json;
+
+namespace ClaudeUsageMonitor;
+
+internal static class Program
+{
+    /// <summary>
+    /// ClaudeUsageMonitor.exe                 normal start (tray + overlay)
+    ///   --demo                               synthetic data in a temporary folder
+    ///   --probe &lt;file.json&gt;              one real query, result written to the file, then exit
+    ///     [--claude &lt;claude.exe&gt;]        use exactly this executable (still signature-checked)
+    ///   --screenshot &lt;folder&gt;            render every window with demo data to PNG, then exit
+    /// The data folder can be moved with the CLAUDE_USAGE_MONITOR_HOME environment variable.
+    /// </summary>
+    [STAThread]
+    static int Main(string[] args)
+    {
+        string? Arg(string name) => Array.IndexOf(args, name) is int i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        bool demo = args.Contains("--demo") || args.Contains("--screenshot");
+
+        if (args.Contains("--probe"))
+            return Probe(Arg("--probe") ?? Path.Combine(DataRoot(false), "probe.json"), Arg("--claude"));
+
+        ApplicationConfiguration.Initialize();
+
+        if (args.Contains("--screenshot"))
+            return Screenshots(Arg("--screenshot") ?? Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-screens"));
+
+        string instance = demo ? "ClaudeUsageMonitor-demo" : "ClaudeUsageMonitor";
+        using var mutex = new Mutex(true, @"Local\" + instance, out bool first);
+        using var reveal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\" + instance + ".reveal");
+        if (!first)
+        {
+            reveal.Set();
+            return 0;
+        }
+
+        string root = DataRoot(demo);
+        MonitorService? service = null;
+        IUsageSource source = demo
+            ? NewDemo(root)
+            : new ClaudeUsageClient(Path.Combine(root, "neutral"), () => service?.Settings.ClaudePath);
+        service = new MonitorService(root, source, demo);
+        using (service)
+            return Run(service, reveal);
+    }
+
+    static int Run(MonitorService service, EventWaitHandle reveal)
+    {
+        var overlay = new OverlayForm(service);
+        var listener = ThreadPool.RegisterWaitForSingleObject(reveal, (_, _) =>
+        {
+            if (overlay.IsHandleCreated && !overlay.IsDisposed)
+                overlay.BeginInvoke(overlay.RevealFromSecondInstance);
+        }, null, Timeout.Infinite, executeOnlyOnce: false);
+        Application.Run(overlay);
+        listener.Unregister(null);
+        return 0;
+    }
+
+    static string DataRoot(bool demo)
+    {
+        if (demo)
+            return Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-demo");
+        string? custom = Environment.GetEnvironmentVariable("CLAUDE_USAGE_MONITOR_HOME");
+        return !string.IsNullOrWhiteSpace(custom)
+            ? Path.GetFullPath(custom)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageMonitor");
+    }
+
+    /// <summary>A fresh demo folder with a week of synthetic history.</summary>
+    static DemoSource NewDemo(string root)
+    {
+        if (Directory.Exists(root))
+            Directory.Delete(root, recursive: true);
+        Directory.CreateDirectory(root);
+        var demo = new DemoSource(DateTimeOffset.UtcNow);
+        demo.Seed(new HistoryStore(root));
+        return demo;
+    }
+
+    /// <summary>One real query without touching the history; for troubleshooting and verification.</summary>
+    static int Probe(string output, string? claudePath)
+    {
+        string root = DataRoot(false);
+        var settings = AtomicJson.Load(Path.Combine(root, "settings.json"), () => new Settings());
+        settings.Normalize();
+        var client = new ClaudeUsageClient(Path.Combine(root, "neutral"), () => claudePath ?? settings.ClaudePath);
+        object result;
+        int code;
+        var started = DateTimeOffset.UtcNow;
+        try
+        {
+            var snapshot = client.ReadAsync(settings.Salt, CancellationToken.None).GetAwaiter().GetResult();
+            result = new { ok = true, seconds = (DateTimeOffset.UtcNow - started).TotalSeconds, claude = client.ExecutablePath, snapshot };
+            code = 0;
+        }
+        catch (MonitorException e)
+        {
+            result = new { ok = false, seconds = (DateTimeOffset.UtcNow - started).TotalSeconds, claude = client.ExecutablePath, error_code = e.Code, message = MonitorService.Explain(e.Code) };
+            code = 2;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        File.WriteAllText(output, JsonSerializer.Serialize(result, AtomicJson.Options));
+        return code;
+    }
+
+    static int Screenshots(string folder)
+    {
+        Directory.CreateDirectory(folder);
+        string root = DataRoot(true);
+        var demo = NewDemo(root);
+        using var service = new MonitorService(root, demo, demo: true);
+        service.PollOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        using (var overlay = new OverlayForm(service))
+        {
+            overlay.Show();
+            foreach (bool compact in new[] { false, true })
+            {
+                overlay.ShowMode(compact);
+                overlay.Location = new Point(40, 40);
+                Grab(overlay, Path.Combine(folder, compact ? "overlay-compact.png" : "overlay-standard.png"));
+            }
+            overlay.ShowMode(false);
+            overlay.ReplayIntro();
+            Grab(overlay, Path.Combine(folder, "overlay-anim-1.png"), settleMs: 120);
+            Grab(overlay, Path.Combine(folder, "overlay-anim-2.png"), settleMs: 180);
+            Grab(overlay, Path.Combine(folder, "overlay-settled.png"), settleMs: 1200);
+            overlay.PlayDemoEffects();
+            Grab(overlay, Path.Combine(folder, "overlay-effects.png"), settleMs: 380);
+        }
+        foreach (var (name, value, remaining) in new[] { ("full", "100", 100.0), ("ok", "40", 40.0), ("warn", "13", 13.0), ("critical", "3", 3.0), ("unknown", "?", -1.0) })
+        {
+            var level = remaining < 0 ? Level.Unknown : Theme.LevelOf(remaining, service.Settings);
+            using var icon = OverlayForm.RenderTrayBitmap(value, level, 32);
+            icon.Save(Path.Combine(folder, $"tray-{name}.png"), ImageFormat.Png);
+        }
+        Capture(new HistoryForm(service), Path.Combine(folder, "history.png"));
+        Capture(new DetailsForm(service), Path.Combine(folder, "details.png"));
+        Capture(new SettingsForm(service), Path.Combine(folder, "settings.png"));
+        return 0;
+    }
+
+    static void Capture(Form form, string path)
+    {
+        using (form)
+        {
+            form.StartPosition = FormStartPosition.Manual;
+            form.Location = new Point(40, 40);
+            form.Show();
+            Grab(form, path);
+            form.Close();
+        }
+    }
+
+    /// <summary>
+    /// PrintWindow with PW_RENDERFULLCONTENT copies only this window's own pixels (DWM title bar and
+    /// themed controls included), even when other windows cover it; the rest of the screen is never read.
+    /// </summary>
+    static void Grab(Form form, string path, int settleMs = 480)
+    {
+        var wait = Stopwatch.StartNew();
+        while (wait.ElapsedMilliseconds < settleMs)
+        {
+            Application.DoEvents();
+            Thread.Sleep(10);
+        }
+        using var bitmap = new Bitmap(form.Width, form.Height);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            IntPtr hdc = g.GetHdc();
+            try
+            {
+                PrintWindow(form.Handle, hdc, 2);
+            }
+            finally
+            {
+                g.ReleaseHdc(hdc);
+            }
+        }
+        bitmap.Save(path, ImageFormat.Png);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+}
