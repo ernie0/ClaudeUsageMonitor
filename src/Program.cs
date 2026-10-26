@@ -64,6 +64,7 @@ internal static class Program
     static int Screenshots(string folder)
     {
         Directory.CreateDirectory(folder);
+        screenshotFolder = folder;
         string root = AppPaths.DataRoot(true);
         var demo = AppPaths.NewDemo(root);
         using var service = new MonitorService(root, demo, demo: true);
@@ -120,18 +121,88 @@ internal static class Program
         using (var details = new DetailsForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) })
         {
             details.Show();
-            details.View.Settle();
+            Frames(details, details.View, "details", [150, 400, 700, 1100]);
+            Hover(details, details.View, "card:" + WindowIds.FiveHour, Path.Combine(folder, "details-hover-card.png"));
+            Hover(details, details.View, "row:" + WindowIds.SevenDay, Path.Combine(folder, "details-hover-row.png"));
+            Hover(details, details.View, null, null);
             Grab(details, Path.Combine(folder, "details.png"));
+            File.AppendAllText(Path.Combine(folder, "paint-timing.txt"), $"details frame: {FrameCost(details.View):0.0} ms\n");
+            // At rest the page must not redraw: CPU used while it sits open for 2 seconds.
+            var cpu = Process.GetCurrentProcess().TotalProcessorTime;
+            Pump(2000);
+            File.AppendAllText(Path.Combine(folder, "paint-timing.txt"),
+                $"details idle 2 s: {(Process.GetCurrentProcess().TotalProcessorTime - cpu).TotalMilliseconds:0} ms CPU, animating: {details.View.Motion.Active}\n");
             details.Close();
         }
         var analysis = new AnalysisForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) };
         analysis.Show();
         analysis.PrepareAsync().GetAwaiter().GetResult();
+        Frames(analysis, analysis.View, "analysis", [200, 600, 1000, 1500]);
+        Hover(analysis, analysis.View, "see:day:3", Path.Combine(folder, "analysis-hover-day.png"));
+        Hover(analysis, analysis.View, "see:heat:2:14", Path.Combine(folder, "analysis-hover-heat.png"));
+        Hover(analysis, analysis.View, null, null);
         Grab(analysis, Path.Combine(folder, "analysis.png"));
         analysis.SaveFullPage(Path.Combine(folder, "analysis-full.png"));
+        File.AppendAllText(Path.Combine(folder, "paint-timing.txt"), $"analysis frame: {FrameCost(analysis.View):0.0} ms\n");
+        // Sections below the window wait until they scroll into view, then enter.
+        var motion = analysis.View.Motion;
+        motion.Time = 50_000;
+        analysis.View.PlayIntro();
+        Grab(analysis, Path.Combine(folder, "analysis-scroll-0.png"), settleMs: 150);
+        analysis.ScrollTo(560);
+        Grab(analysis, Path.Combine(folder, "analysis-scroll-1.png"), settleMs: 150);
+        motion.Time = 50_450;
+        analysis.View.Invalidate();
+        Grab(analysis, Path.Combine(folder, "analysis-scroll-2.png"), settleMs: 150);
+        motion.Time = null;
         analysis.Close();
         Capture(new SettingsForm(service), Path.Combine(folder, "settings.png"));
         return 0;
+    }
+
+    static string screenshotFolder = "";
+    static double hoverClock = 20_000;
+
+    /// <summary>The page entrance at fixed moments (ms), then its end state.</summary>
+    static void Frames(Form form, GlassView view, string name, int[] moments)
+    {
+        view.Motion.Time = 0;
+        view.PlayIntro();
+        Grab(form, Path.Combine(screenshotFolder, $"{name}-anim-0.png"), settleMs: 150);
+        foreach (int ms in moments)
+        {
+            view.Motion.Time = ms;
+            view.Invalidate();
+            Grab(form, Path.Combine(screenshotFolder, $"{name}-anim-{ms}.png"), settleMs: 150);
+        }
+        view.Motion.Time = null;
+        view.Settle();
+    }
+
+    /// <summary>Hovers an area and captures the light sweeping across it; with no path it only moves the pointer.</summary>
+    static void Hover(Form form, GlassView view, string? action, string? path)
+    {
+        hoverClock += 10_000;
+        view.Motion.Time = hoverClock;
+        view.PointAt(action);
+        Pump(150);
+        if (path != null)
+        {
+            view.Motion.Time = hoverClock + 380;
+            view.Invalidate();
+            Grab(form, path, settleMs: 150);
+        }
+        view.Motion.Time = null;
+    }
+
+    /// <summary>Average time to paint a control once (DrawToBitmap, 20 frames).</summary>
+    static double FrameCost(Control control)
+    {
+        using var bitmap = new Bitmap(control.Width, Math.Min(control.Height, 1000));
+        var timer = Stopwatch.StartNew();
+        for (int i = 0; i < 20; i++)
+            control.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+        return timer.Elapsed.TotalMilliseconds / 20;
     }
 
     static void Capture(Form form, string path)
@@ -152,12 +223,7 @@ internal static class Program
     /// </summary>
     static void Grab(Form form, string path, int settleMs = 480)
     {
-        var wait = Stopwatch.StartNew();
-        while (wait.ElapsedMilliseconds < settleMs)
-        {
-            Application.DoEvents();
-            Thread.Sleep(10);
-        }
+        Pump(settleMs);
         using var bitmap = new Bitmap(form.Width, form.Height);
         using (var g = Graphics.FromImage(bitmap))
         {
@@ -172,6 +238,17 @@ internal static class Program
             }
         }
         bitmap.Save(path, ImageFormat.Png);
+    }
+
+    /// <summary>Lets pending paints and timers run for a while.</summary>
+    static void Pump(int ms)
+    {
+        var wait = Stopwatch.StartNew();
+        while (wait.ElapsedMilliseconds < ms)
+        {
+            Application.DoEvents();
+            Thread.Sleep(10);
+        }
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

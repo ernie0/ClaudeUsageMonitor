@@ -115,7 +115,8 @@ internal sealed class OverlayView : Control
     readonly MacShell shell;
     readonly OverlayWindow window;
     readonly DispatcherTimer frame = new() { Interval = TimeSpan.FromMilliseconds(16) };
-    readonly DispatcherTimer ticker = new() { Interval = TimeSpan.FromSeconds(15) };
+    // The clock and the countdowns change once a minute: one repaint at each minute between animations.
+    readonly DispatcherTimer ticker = new() { Interval = TimeSpan.FromMilliseconds(Format.UntilNextMinute(DateTimeOffset.Now)) };
     readonly Stopwatch fx = Stopwatch.StartNew();
     readonly Stopwatch fade = new();
     readonly Dictionary<string, double> shown = [];
@@ -138,7 +139,11 @@ internal sealed class OverlayView : Control
         ClipToBounds = false;
         ContextMenu = shell.BuildContextMenu();
         frame.Tick += (_, _) => OnFrame();
-        ticker.Tick += (_, _) => InvalidateVisual();
+        ticker.Tick += (_, _) =>
+        {
+            ticker.Interval = TimeSpan.FromMilliseconds(Format.UntilNextMinute(DateTimeOffset.Now));
+            InvalidateVisual();
+        };
         ticker.Start();
         service.Changed += () => Dispatcher.UIThread.Post(OnServiceChanged);
         PointerExited += (_, _) =>
@@ -465,6 +470,7 @@ internal sealed class OverlayView : Control
         double metaX = ModeToggle.Left - 8 - metaWidth;
         MacDraw.Text(ctx, meta, MacTheme.Ui(), 9.5, Color.FromRgb(0xC9, 0xC5, 0xE0), new Rect(metaX, Pad + 6, metaWidth + 4, 18), shadow: false);
         var dot = new Point(metaX - 10, Pad + 14);
+        PaintClock(ctx, Pad + 24 + MacDraw.Measure("Claude 額度", MacTheme.Ui(FontWeight.Bold), 11) + 6, Pad + 2, dot.X - 12, now);
         if (pop < 1)
         {
             double ripple = 4 + 12 * (1 - (1 - pop) * (1 - pop));
@@ -551,6 +557,25 @@ internal sealed class OverlayView : Control
             ctx.DrawEllipse(null, new Pen(MacTheme.Solid(Color.FromArgb((byte)(200 * (1 - pop)), 255, 255, 255)), 2), dot, ripple, ripple);
         }
         PaintStatusDot(ctx, dot, 4.5);
+
+        // The time of day, on the free right side of the status-word row.
+        MacDraw.Text(ctx, "現在 " + Format.Clock(now).Time, MacTheme.Ui(), 9.5, MacDraw.Secondary, new Rect(drawn.Right - 90, drawn.Y + 35, 80, 20), TextAlignment.Right, middle: true);
+    }
+
+    /// <summary>The time of day in a small glass chip beside the title; the weekday only when there is room.</summary>
+    void PaintClock(DrawingContext ctx, double x, double y, double limit, DateTimeOffset now)
+    {
+        var (time, day) = Format.Clock(now);
+        double timeWidth = MacDraw.Measure(time, MacTheme.Ui(FontWeight.Bold), 11);
+        double dayWidth = MacDraw.Measure(day, MacTheme.Ui(), 9.5);
+        bool withDay = x + timeWidth + dayWidth + 20 <= limit;
+        var chip = new Rect(x, y, timeWidth + (withDay ? dayWidth + 4 : 0) + 14, 22);
+        if (chip.Right > limit)
+            return;
+        ctx.DrawRectangle(MacTheme.Solid(Color.FromArgb(22, 255, 255, 255)), new Pen(MacTheme.Solid(Color.FromArgb(46, 255, 255, 255)), 1), chip, 11, 11);
+        MacDraw.Text(ctx, time, MacTheme.Ui(FontWeight.Bold), 11, Colors.White, new Rect(chip.X + 7, chip.Y, timeWidth + 2, chip.Height), middle: true, shadow: false);
+        if (withDay)
+            MacDraw.Text(ctx, day, MacTheme.Ui(), 9.5, Color.FromRgb(0xC9, 0xC5, 0xE0), new Rect(chip.X + 11 + timeWidth, chip.Y, dayWidth + 2, chip.Height), middle: true, shadow: false);
     }
 
     Rect Lifted(Rect r, string id, out double amount)

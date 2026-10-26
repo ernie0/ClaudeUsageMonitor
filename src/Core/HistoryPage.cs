@@ -135,7 +135,7 @@ internal static class HistoryPage
     {
         state.Hits.Clear();
         float height = Math.Max(viewHeight, Height(data, state));
-        PageKit.Background(p, width, height);
+        p.Cached("page", new SizeF(width, height), b => PageKit.Background(b, width, height));
         var snapshot = service.Current;
         string? status = snapshot == null ? null : $"{snapshot.PlanLabel} · {snapshot.ObservedAt.ToLocalTime():HH:mm} 更新";
         var dot = service.ErrorCode.Length > 0 ? PageKit.Hex(0xFB7185) : service.Fresh ? PageKit.Green : PageKit.Hex(0xFBBF24);
@@ -157,7 +157,7 @@ internal static class HistoryPage
             string text = days == 1 ? "24 小時" : $"{days} 天";
             string action = "range:" + days;
             float bw = PageKit.ButtonWidth(p, text, IconKind.Calendar);
-            Pill(p, state, new RectangleF(x, by, bw, bh), action, text, IconKind.Calendar, (int)state.Range.TotalDays == days, PageKit.Hex(0xF59E6B), PageKit.Hex(0xEC4899));
+            Choice(p, state, new RectangleF(x, by, bw, bh), action, text, IconKind.Calendar, (int)state.Range.TotalDays == days, PageKit.Hex(0xF59E6B), PageKit.Hex(0xEC4899));
             x += bw + 10;
         }
         x += 14;
@@ -166,34 +166,16 @@ internal static class HistoryPage
             float bw = PageKit.ButtonWidth(p, title, IconFor(id));
             if (x + bw > bar.Right - 160)
                 break;
-            Pill(p, state, new RectangleF(x, by, bw, bh), "window:" + id, title, IconFor(id), state.Window == id, PageKit.Violet, PageKit.Indigo);
+            Choice(p, state, new RectangleF(x, by, bw, bh), "window:" + id, title, IconFor(id), state.Window == id, PageKit.Violet, PageKit.Indigo);
             x += bw + 10;
         }
         float ew = PageKit.ButtonWidth(p, "匯出 CSV", IconKind.Download);
-        Pill(p, state, new RectangleF(bar.Right - 16 - ew, by, ew, bh), "export", "匯出 CSV", IconKind.Download, false, PageKit.Violet, PageKit.Indigo);
+        Choice(p, state, new RectangleF(bar.Right - 16 - ew, by, ew, bh), "export", "匯出 CSV", IconKind.Download, false, PageKit.Violet, PageKit.Indigo);
         return bar.Bottom;
     }
 
-    static void Pill(IPaint p, HistoryState state, RectangleF r, string action, string text, IconKind icon, bool active, Color from, Color to)
-    {
-        bool hover = state.Hover == action;
-        float radius = r.Height / 2;
-        if (active)
-        {
-            PageKit.Glow(p, r, radius, from, 110);
-            p.Gradient(r, from, to, radius);
-        }
-        else
-        {
-            p.Fill(r, hover ? PageKit.Hex(0x2A2F58, 235) : PageKit.Hex(0x1C2042, 210), radius);
-            p.Stroke(r, hover ? PageKit.WithAlpha(PageKit.Violet, 220) : PageKit.Hex(0x3C4378), 1.2f, radius);
-        }
-        float textWidth = p.Measure(text, 10.5f, bold: true);
-        float x = r.X + (r.Width - textWidth - 24) / 2;
-        PageKit.Icon(p, icon, new RectangleF(x, r.Y + r.Height / 2 - 8, 16, 16), PageKit.Text, 1.7f);
-        p.Text(text, new RectangleF(x + 24, r.Y, textWidth + 4, r.Height), 10.5f, PageKit.Text, bold: true, middle: true);
-        state.Hits.Add(new Hit(r, action));
-    }
+    static void Choice(IPaint p, HistoryState state, RectangleF r, string action, string text, IconKind icon, bool active, Color from, Color to) =>
+        PageKit.Choice(p, state.Hits, action, r, text, icon, active, state.Hover == action ? 1 : 0, from, to);
 
     static float Stats(IPaint p, HistoryData data, HistoryState state, float y, float width)
     {
@@ -357,7 +339,7 @@ internal static class HistoryPage
 
     static void Summary(IPaint p, MonitorService service, HistoryData data, HistoryState state, QuotaWindow? current, Level level, Color light, RectangleF r, DateTimeOffset now)
     {
-        PageKit.Card(p, r, level, 18, false, 0.7f);
+        PageKit.Card(p, r, level, 18, 0, 0.7f);
         if (current == null)
         {
             p.Text("這個額度目前沒有資料", r, 11, PageKit.Muted, align: TextAlign.Center, middle: true);

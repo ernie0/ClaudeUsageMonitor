@@ -161,10 +161,12 @@ internal sealed class HistoryPageControl : Control
     readonly HistoryWindow owner;
     readonly DispatcherTimer frame = new() { Interval = TimeSpan.FromMilliseconds(16) };
     readonly Stopwatch intro = new();
+    readonly PictureCache cache = new();
 
     public HistoryPageControl(HistoryWindow owner)
     {
         this.owner = owner;
+        DetachedFromVisualTree += (_, _) => cache.Dispose();
         frame.Tick += (_, _) =>
         {
             double t = Math.Min(1, intro.ElapsedMilliseconds / 700.0);
@@ -205,7 +207,7 @@ internal sealed class HistoryPageControl : Control
         if (owner.Data == null)
             return;
         double viewHeight = (this.GetVisualParent()?.GetVisualParent() as Visual)?.Bounds.Height ?? Bounds.Height;
-        HistoryPage.Render(new AvaloniaPaint(ctx), (float)Bounds.Width, (float)Math.Max(Bounds.Height, viewHeight), owner.Service, owner.Data, owner.State, DateTimeOffset.UtcNow);
+        HistoryPage.Render(new AvaloniaPaint(ctx, cache, TopLevel.GetTopLevel(this)?.RenderScaling ?? 1), (float)Bounds.Width, (float)Math.Max(Bounds.Height, viewHeight), owner.Service, owner.Data, owner.State, DateTimeOffset.UtcNow);
         var box = owner.State.SearchBox;
         Dispatcher.UIThread.Post(() => owner.PlaceSearch(box));
     }

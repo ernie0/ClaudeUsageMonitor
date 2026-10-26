@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace ClaudeUsageMonitor;
 
 /// <summary>The details dashboard (layout in Core/DetailsPage.cs), hosted with scrolling, hover and clicks.</summary>
@@ -46,7 +44,11 @@ internal sealed class DetailsForm : Form
             if (!IsDisposed)
                 view.Invalidate();
         };
-        HandleCreated += (_, _) => Theme.ApplyWindowChrome(this);
+        HandleCreated += (_, _) =>
+        {
+            Theme.ApplyWindowChrome(this);
+            Theme.DarkScrollbars(scroller);
+        };
     }
 
     internal DashboardView View => view;
@@ -56,6 +58,7 @@ internal sealed class DetailsForm : Form
         switch (action)
         {
             case "refresh":
+            case "refresh:top":
                 if (!service.Refresh(manual: true))
                     MessageBox.Show(this, "10 秒內只能手動更新一次。", "請稍候", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 break;
@@ -83,34 +86,18 @@ internal sealed class DetailsForm : Form
     }
 }
 
-/// <summary>Draws the dashboard with GDI+; hover highlights what is clickable, rings sweep in on open.</summary>
-internal sealed class DashboardView : Control
+/// <summary>Draws the dashboard with GDI+ through the shared layout and animation clock.</summary>
+internal sealed class DashboardView : GlassView
 {
     readonly MonitorService service;
     readonly DetailsForm owner;
-    readonly PageState state = new();
-    readonly System.Windows.Forms.Timer frame = new() { Interval = 16 };
     readonly System.Windows.Forms.Timer ticker = new() { Interval = 30_000 };
-    readonly Stopwatch intro = new();
     Size viewport;
 
     public DashboardView(MonitorService service, DetailsForm owner)
     {
         this.service = service;
         this.owner = owner;
-        DoubleBuffered = true;
-        BackColor = PageKit.PageTop;
-        frame.Tick += (_, _) =>
-        {
-            double t = Math.Min(1, intro.ElapsedMilliseconds / 900.0);
-            state.Intro = (float)(1 - Math.Pow(1 - t, 3));
-            Invalidate();
-            if (t >= 1)
-            {
-                frame.Stop();
-                intro.Reset();
-            }
-        };
         ticker.Tick += (_, _) => Invalidate();
         ticker.Start();
         Action onChanged = () =>
@@ -122,74 +109,22 @@ internal sealed class DashboardView : Control
         Disposed += (_, _) =>
         {
             service.Changed -= onChanged;
-            frame.Dispose();
             ticker.Dispose();
         };
     }
 
-    float UiScale => DeviceDpi / 96f;
-
     public void Fit(Size client)
     {
         viewport = client;
-        int height = (int)Math.Ceiling(DetailsPage.Height(service, state) * UiScale);
+        int height = (int)Math.Ceiling(DetailsPage.Height(service, State) * UiScale);
         Size = new Size(client.Width, Math.Max(client.Height, height));
         Invalidate();
     }
 
-    public void PlayIntro()
-    {
-        if (!Theme.AnimationsEnabled)
-            return;
-        state.Intro = 0;
-        intro.Restart();
-        frame.Start();
-    }
+    public void ToggleSource() => State.SourceOpen = !State.SourceOpen;
 
-    /// <summary>Finishes the intro at once; used by --screenshot.</summary>
-    public void Settle()
-    {
-        frame.Stop();
-        state.Intro = 1;
-        Invalidate();
-    }
+    protected override void Draw(IPaint paint, float width) =>
+        DetailsPage.Render(paint, width, Math.Max(Height / UiScale, ViewHeight), service, State, DateTimeOffset.UtcNow);
 
-    public void ToggleSource() => state.SourceOpen = !state.SourceOpen;
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        var g = e.Graphics;
-        TilePainter.Prepare(g);
-        using var paint = new GdiPaint(g, UiScale);
-        DetailsPage.Render(paint, Width / UiScale, Height / UiScale, service, state, DateTimeOffset.UtcNow);
-    }
-
-    protected override void OnMouseMove(MouseEventArgs e)
-    {
-        base.OnMouseMove(e);
-        string? hit = state.HitAt(new PointF(e.X / UiScale, e.Y / UiScale));
-        Cursor = hit != null ? Cursors.Hand : Cursors.Default;
-        if (hit != state.Hover)
-        {
-            state.Hover = hit;
-            Invalidate();
-        }
-    }
-
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        if (state.Hover != null)
-        {
-            state.Hover = null;
-            Invalidate();
-        }
-    }
-
-    protected override void OnMouseClick(MouseEventArgs e)
-    {
-        base.OnMouseClick(e);
-        if (e.Button == MouseButtons.Left && state.HitAt(new PointF(e.X / UiScale, e.Y / UiScale)) is { } action)
-            owner.Act(action);
-    }
+    protected override void Act(string action) => owner.Act(action);
 }

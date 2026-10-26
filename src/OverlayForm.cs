@@ -24,8 +24,8 @@ internal sealed class OverlayForm : Form
     readonly NotifyIcon tray = new();
     readonly ContextMenuStrip menu = new();
     readonly ToolTip tip = new() { InitialDelay = 600, AutoPopDelay = 15000, ReshowDelay = 200 };
-    // Countdowns are shown in minutes, so a slow repaint is enough between animations.
-    readonly System.Windows.Forms.Timer ticker = new() { Interval = 15_000 };
+    // The clock and the countdowns change once a minute, so one repaint at each minute is enough between animations.
+    readonly System.Windows.Forms.Timer ticker = new() { Interval = 60_000 };
     readonly System.Windows.Forms.Timer frame = new() { Interval = 16 };
     readonly Stopwatch fadeClock = new();
     readonly Dictionary<string, double> shown = [];
@@ -120,7 +120,11 @@ internal sealed class OverlayForm : Form
 
         service.Changed += OnServiceChanged;
         service.Alert += OnAlert;
-        ticker.Tick += (_, _) => Invalidate();
+        ticker.Tick += (_, _) =>
+        {
+            ticker.Interval = Format.UntilNextMinute(DateTimeOffset.Now);
+            Invalidate();
+        };
         frame.Tick += (_, _) => OnFrame();
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
@@ -132,6 +136,7 @@ internal sealed class OverlayForm : Form
             RestorePosition();
             UpdateTray();
             tray.Visible = true;
+            ticker.Interval = Format.UntilNextMinute(DateTimeOffset.Now);
             ticker.Start();
             service.Start();
             if (service.Settings.StartHidden)
@@ -738,6 +743,7 @@ internal sealed class OverlayForm : Form
         using (var metaBrush = new SolidBrush(Color.FromArgb(0xC9, 0xC5, 0xE0)))
             g.DrawString(meta, f.Small, metaBrush, new PointF(metaX, headerY + 6 * s));
         var dot = new PointF(metaX - 10 * s, headerY + 14 * s);
+        PaintClock(g, (Pad + 24) * s + g.MeasureString("Claude 額度", f.Header).Width + 6 * s, headerY + 2 * s, dot.X - 12 * s, now);
         if (pop < 1)
         {
             float ripple = (4 + 12 * (1 - (1 - pop) * (1 - pop))) * s;
@@ -845,6 +851,38 @@ internal sealed class OverlayForm : Form
             g.DrawEllipse(ring, dot.X - ripple, dot.Y - ripple, ripple * 2, ripple * 2);
         }
         PaintStatusDot(g, dot, 4.5f * s);
+
+        // The time of day, on the free right side of the status-word row.
+        var (time, _) = Format.Clock(now);
+        using var right = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
+        TilePainter.Text(g, "現在 " + time, f.Small, TilePainter.Secondary, new RectangleF(drawn.Right - 90 * s, drawn.Y + 35 * s, 80 * s, 20 * s), right, s);
+    }
+
+    /// <summary>The time of day in a small glass chip beside the title; the weekday only when there is room.</summary>
+    void PaintClock(Graphics g, float x, float y, float limit, DateTimeOffset now)
+    {
+        var f = Fonts;
+        float s = UiScale;
+        var (time, day) = Format.Clock(now);
+        float timeWidth = g.MeasureString(time, f.Header).Width;
+        float dayWidth = g.MeasureString(day, f.Small).Width;
+        bool withDay = x + timeWidth + dayWidth + 12 * s <= limit;
+        var chip = new RectangleF(x, y, timeWidth + (withDay ? dayWidth : 0) + 10 * s, 22 * s);
+        if (chip.Right > limit)
+            return;
+        using (var path = Theme.RoundedRect(chip, chip.Height / 2))
+        {
+            using var fill = new SolidBrush(Color.FromArgb(22, 255, 255, 255));
+            g.FillPath(fill, path);
+            using var edge = new Pen(Color.FromArgb(46, 255, 255, 255), 1);
+            g.DrawPath(edge, path);
+        }
+        g.DrawString(time, f.Header, Brushes.White, new PointF(chip.X + 4 * s, chip.Y + 1 * s));
+        if (withDay)
+        {
+            using var muted = new SolidBrush(Color.FromArgb(0xC9, 0xC5, 0xE0));
+            g.DrawString(day, f.Small, muted, new PointF(chip.X + 4 * s + timeWidth - 2 * s, chip.Y + 3 * s));
+        }
     }
 
     /// <summary>Green: fresh; amber: stale; red: failing. Spins a halo while querying.</summary>

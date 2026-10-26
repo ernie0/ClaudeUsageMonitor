@@ -54,10 +54,21 @@ internal static class PageKit
             (width * 0.86f, 260, 130, Hex(0xF43F5E), 5),
             (width * 0.5f, height * 0.75f, 220, Hex(0x4F46E5), 4),
         ];
+        // Many faint rings fade each light out smoothly; hosts keep the backdrop as a picture, so the count
+        // costs nothing per frame.
+        const int Rings = 32;
         foreach (var (x, y, size, color, alpha) in lights)
         {
-            for (int i = 6; i >= 1; i--)
-                p.Circle(new PointF(x, y), size * 0.45f + i * size * 0.16f, WithAlpha(color, alpha + i));
+            float inner = size * 0.45f, outer = size * 1.41f;
+            double total = alpha * 6 + 21, carry = 0;
+            for (int k = 0; k < Rings; k++)
+            {
+                carry += total / Rings;
+                int a = (int)carry;
+                carry -= a;
+                if (a > 0)
+                    p.Circle(new PointF(x, y), outer - (outer - inner) * k / (Rings - 1), WithAlpha(color, a));
+            }
         }
     }
 
@@ -85,24 +96,123 @@ internal static class PageKit
 
     public static void Glow(IPaint p, RectangleF r, float radius, Color color, int strength)
     {
+        if (strength <= 0)
+            return;
         for (int i = 4; i >= 1; i--)
             p.Stroke(RectangleF.Inflate(r, i * 1.6f, i * 1.6f), WithAlpha(color, strength / (i + 1)), 2.2f, radius + i * 1.6f);
     }
 
-    /// <summary>Neutral glass panel.</summary>
-    /// <summary>Neutral frosted-glass panel.</summary>
-    public static void Panel(IPaint p, RectangleF r, float radius = 16, bool hover = false)
+    /// <summary>A soft band of light crossing glass once (progress 0..1), kept inside the shape.</summary>
+    public static void Shine(IPaint p, RectangleF r, float radius, float progress, int strength = 64)
     {
+        if (progress is < 0 or > 1)
+            return;
+        float band = Math.Clamp(r.Width * 0.16f, 22, 80);
+        float slant = r.Height * 0.6f;
+        float x = r.X - band - slant + (r.Width + band + slant) * Motion.Out(progress);
+        using (p.Clip(r, radius))
+        {
+            // Three overlapping bands: soft edges, a brighter core.
+            for (int i = 0; i < 3; i++)
+            {
+                float inset = band * i / 6;
+                p.Polygon([new(x + slant + inset, r.Y), new(x + slant + band - inset, r.Y), new(x + band - inset, r.Bottom), new(x + inset, r.Bottom)],
+                    Color.FromArgb(strength / 3, 255, 255, 255));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Entrance: fades in by progress <paramref name="t"/> (0..1) while sliding from (dx, dy) and growing from
+    /// <paramref name="from"/> around <paramref name="origin"/>. Free once the entrance is over.
+    /// </summary>
+    public static IDisposable Enter(IPaint p, float t, float dx, float dy, float from = 1, PointF origin = default)
+    {
+        if (t >= 1)
+            return Scope.None;
+        var fade = p.Fade(Math.Clamp(t, 0, 1));
+        return new Scope(fade, p.Transform(dx * (1 - t), dy * (1 - t), from + (1 - from) * t, 0, origin));
+    }
+
+    /// <summary>Several drawing scopes closed together, innermost first.</summary>
+    internal sealed class Scope(params IDisposable[] parts) : IDisposable
+    {
+        public static readonly Scope None = new();
+
+        public void Dispose()
+        {
+            for (int i = parts.Length - 1; i >= 0; i--)
+                parts[i].Dispose();
+        }
+    }
+
+    public static PointF Center(RectangleF r) => new(r.X + r.Width / 2, r.Y + r.Height / 2);
+
+    /// <summary>Neutral frosted-glass panel.</summary>
+    public static void Panel(IPaint p, RectangleF r, float radius = 16, float hover = 0)
+    {
+        if (hover > 0)
+            Glow(p, r, radius, Violet, (int)(70 * hover));
         p.Gradient(r, WithAlpha(PanelTop, 175), WithAlpha(PanelBottom, 200), radius, vertical: true);
         GlassSheen(p, r, radius, 0.8f);
-        p.Stroke(r, hover ? WithAlpha(Violet, 210) : WithAlpha(Hex(0x5A63A8), 120), hover ? 1.6f : 1.1f, radius);
+        p.Stroke(r, Mix(WithAlpha(Hex(0x5A63A8), 120), WithAlpha(Violet, 210), hover), 1.1f + 0.5f * hover, radius);
+    }
+
+    /// <summary>A bar of tinted glass: the light colour fading into the deep one, a highlight stripe and a bright edge.</summary>
+    public static void GlassBar(IPaint p, RectangleF r, Color light, Color deep, float radius, bool vertical)
+    {
+        if (r.Width < 1 || r.Height < 1)
+            return;
+        radius = Math.Min(radius, Math.Min(r.Width, r.Height) / 2);
+        if (vertical)
+        {
+            p.Gradient(r, WithAlpha(Mix(light, Color.White, 0.12f), 240), WithAlpha(deep, 220), radius, vertical: true);
+            // Light running down the left side, as on a glass tube.
+            if (r.Height > 8)
+                p.Fill(new RectangleF(r.X + r.Width * 0.18f, r.Y + 4, Math.Max(2, r.Width * 0.14f), r.Height - 8), Color.FromArgb(58, 255, 255, 255), r.Width * 0.07f);
+            p.Line(new PointF(r.X + radius, r.Y + 1.2f), new PointF(r.Right - radius, r.Y + 1.2f), Color.FromArgb(170, 255, 255, 255), 1.2f);
+        }
+        else
+        {
+            p.Gradient(r, WithAlpha(deep, 235), WithAlpha(Mix(light, Color.White, 0.1f), 245), radius);
+            p.Fill(new RectangleF(r.X + 2, r.Y + 1, Math.Max(0, r.Width - 4), r.Height * 0.38f), Color.FromArgb(62, 255, 255, 255), r.Height * 0.19f);
+        }
+        p.Stroke(r, WithAlpha(Mix(light, Color.White, 0.45f), 110), 1, radius);
+    }
+
+    /// <summary>
+    /// A floating glass tooltip above <paramref name="anchor"/> (below when there is no room), kept inside
+    /// <paramref name="bounds"/>; <paramref name="t"/> fades and lifts it in.
+    /// </summary>
+    public static void Tooltip(IPaint p, PointF anchor, IReadOnlyList<(string Text, Color Color, bool Bold)> lines, Color light, RectangleF bounds, float t)
+    {
+        if (t <= 0 || lines.Count == 0)
+            return;
+        float w = lines.Max(l => p.Measure(l.Text, 10, l.Bold)) + 30;
+        float h = lines.Count * 21 + 16;
+        var box = new RectangleF(Math.Clamp(anchor.X - w / 2, bounds.Left + 4, Math.Max(bounds.Left + 4, bounds.Right - w - 4)), anchor.Y - h - 12, w, h);
+        if (box.Top < bounds.Top)
+            box.Y = anchor.Y + 14;
+        using (Enter(p, t, 0, 8, 0.96f, Center(box)))
+        {
+            Glow(p, box, 12, light, 80);
+            p.Gradient(box, Hex(0x2C3060, 245), Hex(0x1A1D40, 245), 12, vertical: true);
+            GlassSheen(p, box, 12, 0.7f);
+            p.Stroke(box, WithAlpha(light, 220), 1.2f, 12);
+            float y = box.Y + 8;
+            foreach (var (text, color, bold) in lines)
+            {
+                p.Text(text, new RectangleF(box.X + 15, y, w - 26, 21), 10, color, bold, middle: true);
+                y += 21;
+            }
+        }
     }
 
     /// <summary>Tinted glass card: translucent colour over the page light, glass sheen, and a glow in the level's light colour.</summary>
-    public static void Card(IPaint p, RectangleF r, Level level, float radius, bool hover, float strength = 1)
+    public static void Card(IPaint p, RectangleF r, Level level, float radius, float hover, float strength = 1)
     {
         var (top, bottom, light) = Tint(level);
-        Glow(p, r, radius, light, (int)((hover ? 160 : 90) * strength));
+        Glow(p, r, radius, light, (int)((90 + 75 * hover) * strength));
         p.Gradient(r, WithAlpha(top, 200), WithAlpha(bottom, 185), radius, vertical: true);
         using (p.Clip(r, radius))
         {
@@ -110,8 +220,8 @@ internal static class PageKit
             p.Circle(new PointF(r.Right - r.Height * 0.15f, r.Top - r.Height * 0.1f), r.Height * 0.65f, WithAlpha(light, 26));
             p.Circle(new PointF(r.X + r.Width * 0.1f, r.Bottom + r.Height * 0.2f), r.Height * 0.55f, Color.FromArgb(18, 0, 0, 0));
         }
-        GlassSheen(p, r, radius, 1.1f);
-        p.Stroke(r, WithAlpha(light, hover ? 235 : 160), hover ? 1.8f : 1.2f, radius);
+        GlassSheen(p, r, radius, 1.1f + 0.25f * hover);
+        p.Stroke(r, WithAlpha(light, (int)(160 + 75 * hover)), 1.2f + 0.6f * hover, radius);
     }
 
     /// <summary>A rounded label; returns its width.</summary>
@@ -129,31 +239,71 @@ internal static class PageKit
     public static float ButtonWidth(IPaint p, string text, IconKind? icon, float points = 10.5f) =>
         p.Measure(text, points, bold: true) + (icon == null ? 34 : 56);
 
-    /// <summary>Glass button (or the violet gradient primary one) with an optional icon; registers its hit area.</summary>
-    public static void Button(IPaint p, List<Hit> hits, string action, RectangleF r, string text, IconKind? icon, bool primary, string? hover, float points = 10.5f)
+    /// <summary>
+    /// Glass button (or the violet gradient primary one) with an optional icon; registers its hit area.
+    /// hover (0..1) eases it brighter and a little higher, sweep (0..1) runs one band of light across it,
+    /// spin turns the icon (degrees) while work is running.
+    /// </summary>
+    public static void Button(IPaint p, List<Hit> hits, string action, RectangleF r, string text, IconKind? icon, bool primary,
+        float hover, float sweep = -1, float spin = 0, bool enabled = true, float points = 10.5f)
     {
-        bool over = hover == action;
-        float radius = r.Height / 2;
-        if (primary)
-        {
-            Glow(p, r, radius, Violet, over ? 140 : 70);
-            p.Gradient(r, over ? Hex(0xA06BFF) : Hex(0x8B5CF6), over ? Hex(0x6E7BFF) : Hex(0x5B67F0), radius);
-        }
-        else
-        {
-            p.Fill(r, over ? Hex(0x2A2F58, 240) : Hex(0x1C2042, 230), radius);
-            p.Stroke(r, over ? WithAlpha(Violet, 220) : Hex(0x3C4378), 1.2f, radius);
-        }
-        float textWidth = p.Measure(text, points, bold: true);
-        float contentWidth = textWidth + (icon == null ? 0 : 24);
-        float x = r.X + (r.Width - contentWidth) / 2;
-        if (icon is { } kind)
-        {
-            Icon(p, kind, new RectangleF(x, r.Y + r.Height / 2 - 8, 16, 16), Text, 1.7f);
-            x += 24;
-        }
-        p.Text(text, new RectangleF(x, r.Y, textWidth + 4, r.Height), points, Text, bold: true, middle: true);
         hits.Add(new Hit(r, action));
+        float radius = r.Height / 2;
+        using (p.Transform(0, -1.5f * hover))
+        {
+            if (primary && enabled)
+            {
+                Glow(p, r, radius, Violet, (int)(70 + 70 * hover));
+                p.Gradient(r, Mix(Hex(0x8B5CF6), Hex(0xA06BFF), hover), Mix(Hex(0x5B67F0), Hex(0x6E7BFF), hover), radius);
+            }
+            else
+            {
+                Glow(p, r, radius, Violet, (int)(60 * hover));
+                p.Gradient(r, Mix(Hex(0x252A52, 235), Hex(0x323868, 245), hover), Mix(Hex(0x181B3A, 230), Hex(0x232850, 240), hover), radius, vertical: true);
+                p.Stroke(r, Mix(Hex(0x3C4378), WithAlpha(Violet, 220), hover), 1.2f, radius);
+            }
+            GlassSheen(p, r, radius, 0.6f);
+            Shine(p, r, radius, sweep);
+            var ink = enabled ? Text : Muted;
+            float textWidth = p.Measure(text, points, bold: true);
+            float contentWidth = textWidth + (icon == null ? 0 : 24);
+            float x = r.X + (r.Width - contentWidth) / 2;
+            if (icon is { } kind)
+            {
+                var box = new RectangleF(x, r.Y + r.Height / 2 - 8, 16, 16);
+                using (p.Transform(0, 0, 1, spin, Center(box)))
+                    Icon(p, kind, box, ink, 1.7f);
+                x += 24;
+            }
+            p.Text(text, new RectangleF(x, r.Y, textWidth + 4, r.Height), points, ink, bold: true, middle: true);
+        }
+    }
+
+    /// <summary>A pill in a group of choices (range, window): the chosen one carries a gradient and a glow.</summary>
+    public static void Choice(IPaint p, List<Hit> hits, string action, RectangleF r, string text, IconKind icon, bool active, float hover, Color from, Color to, float sweep = -1)
+    {
+        hits.Add(new Hit(r, action));
+        float radius = r.Height / 2;
+        using (p.Transform(0, -1.5f * hover))
+        {
+            if (active)
+            {
+                Glow(p, r, radius, from, (int)(110 + 40 * hover));
+                p.Gradient(r, from, to, radius);
+            }
+            else
+            {
+                Glow(p, r, radius, Violet, (int)(50 * hover));
+                p.Gradient(r, Mix(Hex(0x22274E, 215), Hex(0x30366A, 240), hover), Mix(Hex(0x181B3A, 210), Hex(0x232850, 235), hover), radius, vertical: true);
+                p.Stroke(r, Mix(Hex(0x3C4378), WithAlpha(Violet, 220), hover), 1.2f, radius);
+            }
+            GlassSheen(p, r, radius, 0.6f);
+            Shine(p, r, radius, sweep);
+            float textWidth = p.Measure(text, 10.5f, bold: true);
+            float x = r.X + (r.Width - textWidth - 24) / 2;
+            Icon(p, icon, new RectangleF(x, r.Y + r.Height / 2 - 8, 16, 16), Text, 1.7f);
+            p.Text(text, new RectangleF(x + 24, r.Y, textWidth + 4, r.Height), 10.5f, Text, bold: true, middle: true);
+        }
     }
 
     /// <summary>Glowing ring: the arc is what is left, fading from the light colour to white at its end.</summary>
@@ -210,10 +360,16 @@ internal static class PageKit
         p.Text(text, new RectangleF(r.X + 36, r.Y, r.Width - 44, r.Height), 10.5f, Text, middle: true);
     }
 
-    /// <summary>Page title with the Claude-style sunburst, an optional plan pill, a subtitle and a status pill.</summary>
-    public static void Header(IPaint p, float width, string title, string subtitle, string? plan, string? status, Color statusDot, float rightReserve)
+    public static readonly RectangleF SunBox = new(22, 18, 42, 42);
+
+    /// <summary>
+    /// Page title with the Claude-style sunburst (turned by <paramref name="sunTurn"/> degrees), an optional
+    /// plan pill, a subtitle and a status pill.
+    /// </summary>
+    public static void Header(IPaint p, float width, string title, string subtitle, string? plan, string? status, Color statusDot, float rightReserve, float sunTurn = 0)
     {
-        Icon(p, IconKind.Sun, new RectangleF(22, 18, 42, 42), Orange, 0);
+        using (p.Transform(0, 0, 1, sunTurn, Center(SunBox)))
+            Icon(p, IconKind.Sun, SunBox, Orange, 0);
         p.Text(title, new RectangleF(76, 14, 600, 34), 19, Text, bold: true);
         if (plan != null)
         {

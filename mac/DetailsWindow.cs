@@ -1,11 +1,5 @@
-using System.Diagnostics;
-using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Media;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
-using SD = System.Drawing;
 
 namespace ClaudeUsageMonitor;
 
@@ -36,31 +30,17 @@ internal sealed class DetailsWindow : Window
     public DashboardControl Cards => dashboard;
 }
 
-/// <summary>Draws the dashboard with Avalonia; hover highlights what is clickable, rings sweep in on open.</summary>
-internal sealed class DashboardControl : Control
+/// <summary>Draws the dashboard with Avalonia through the shared layout and animation clock.</summary>
+internal sealed class DashboardControl : GlassControl
 {
     readonly MonitorService service;
     readonly MacShell shell;
-    readonly PageState state = new();
-    readonly DispatcherTimer frame = new() { Interval = TimeSpan.FromMilliseconds(16) };
     readonly DispatcherTimer ticker = new() { Interval = TimeSpan.FromSeconds(30) };
-    readonly Stopwatch intro = new();
 
     public DashboardControl(MonitorService service, MacShell shell)
     {
         this.service = service;
         this.shell = shell;
-        frame.Tick += (_, _) =>
-        {
-            double t = Math.Min(1, intro.ElapsedMilliseconds / 900.0);
-            state.Intro = (float)(1 - Math.Pow(1 - t, 3));
-            InvalidateVisual();
-            if (t >= 1)
-            {
-                frame.Stop();
-                intro.Reset();
-            }
-        };
         ticker.Tick += (_, _) => InvalidateVisual();
         ticker.Start();
         Action onChanged = () => Dispatcher.UIThread.Post(() =>
@@ -76,65 +56,21 @@ internal sealed class DashboardControl : Control
         };
     }
 
-    public void PlayIntro()
-    {
-        if (!MacShell.AnimationsEnabled)
-            return;
-        state.Intro = 0;
-        intro.Restart();
-        frame.Start();
-    }
-
-    public void Settle()
-    {
-        frame.Stop();
-        state.Intro = 1;
-        InvalidateVisual();
-    }
-
-    protected override Size MeasureOverride(Size availableSize)
+    protected override Avalonia.Size MeasureOverride(Avalonia.Size availableSize)
     {
         double width = double.IsInfinity(availableSize.Width) ? 1320 : availableSize.Width;
-        return new Size(width, DetailsPage.Height(service, state));
+        return new Avalonia.Size(width, DetailsPage.Height(service, State));
     }
 
-    public override void Render(DrawingContext ctx)
-    {
-        double viewHeight = (this.GetVisualParent() as Visual)?.Bounds.Height ?? Bounds.Height;
-        DetailsPage.Render(new AvaloniaPaint(ctx), (float)Bounds.Width, (float)Math.Max(Bounds.Height, viewHeight), service, state, DateTimeOffset.UtcNow);
-    }
+    protected override void Draw(IPaint paint, float width) =>
+        DetailsPage.Render(paint, width, (float)Math.Max(Bounds.Height, ViewHeight), service, State, DateTimeOffset.UtcNow);
 
-    protected override void OnPointerMoved(PointerEventArgs e)
+    protected override void Act(string action)
     {
-        base.OnPointerMoved(e);
-        var at = e.GetPosition(this);
-        string? hit = state.HitAt(new SD.PointF((float)at.X, (float)at.Y));
-        Cursor = hit != null ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
-        if (hit != state.Hover)
-        {
-            state.Hover = hit;
-            InvalidateVisual();
-        }
-    }
-
-    protected override void OnPointerExited(PointerEventArgs e)
-    {
-        base.OnPointerExited(e);
-        state.Hover = null;
-        InvalidateVisual();
-    }
-
-    protected override void OnPointerPressed(PointerPressedEventArgs e)
-    {
-        base.OnPointerPressed(e);
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-            return;
-        var at = e.GetPosition(this);
-        if (state.HitAt(new SD.PointF((float)at.X, (float)at.Y)) is not { } action)
-            return;
         switch (action)
         {
             case "refresh":
+            case "refresh:top":
                 if (!service.Refresh(manual: true))
                     MacDialog.Show(null, "請稍候", "10 秒內只能手動更新一次。");
                 break;
@@ -151,7 +87,7 @@ internal sealed class DashboardControl : Control
                 MacShell.Open(service.Root);
                 break;
             case "source":
-                state.SourceOpen = !state.SourceOpen;
+                State.SourceOpen = !State.SourceOpen;
                 InvalidateMeasure();
                 InvalidateVisual();
                 break;

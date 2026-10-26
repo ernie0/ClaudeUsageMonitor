@@ -58,7 +58,11 @@ internal sealed class HistoryForm : Form
         Controls.Add(scroller);
 
         Load += (_, _) => Reload(scanTokens: true);
-        HandleCreated += (_, _) => Theme.ApplyWindowChrome(this);
+        HandleCreated += (_, _) =>
+        {
+            Theme.ApplyWindowChrome(this);
+            Theme.DarkScrollbars(scroller);
+        };
         Action onChanged = () =>
         {
             var observed = service.Current?.ObservedAt;
@@ -151,6 +155,7 @@ internal sealed class HistoryView : Control
     readonly HistoryForm owner;
     readonly System.Windows.Forms.Timer frame = new() { Interval = 16 };
     readonly Stopwatch intro = new();
+    readonly PaintCache cache = new();
 
     public HistoryView(HistoryForm owner)
     {
@@ -168,7 +173,11 @@ internal sealed class HistoryView : Control
                 intro.Reset();
             }
         };
-        Disposed += (_, _) => frame.Dispose();
+        Disposed += (_, _) =>
+        {
+            frame.Dispose();
+            cache.Dispose();
+        };
     }
 
     float UiScale => DeviceDpi / 96f;
@@ -204,7 +213,7 @@ internal sealed class HistoryView : Control
             return;
         var g = e.Graphics;
         TilePainter.Prepare(g);
-        using (var paint = new GdiPaint(g, UiScale))
+        using (var paint = new GdiPaint(g, UiScale, cache))
             HistoryPage.Render(paint, Width / UiScale, Height / UiScale, owner.Service, owner.Data, owner.State, DateTimeOffset.UtcNow);
         var box = owner.State.SearchBox;
         var bounds = new Rectangle((int)(box.X * UiScale), (int)(box.Y * UiScale + (box.Height * UiScale - owner.Search.Height) / 2),

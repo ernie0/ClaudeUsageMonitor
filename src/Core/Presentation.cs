@@ -175,6 +175,16 @@ internal static class Format
         return local.ToString("MM/dd", Culture) + "（" + "日一二三四五六"[(int)local.DayOfWeek] + "）" + time;
     }
 
+    /// <summary>The overlay clock: "22:47" and "週一".</summary>
+    public static (string Time, string Day) Clock(DateTimeOffset now)
+    {
+        var local = now.ToLocalTime();
+        return (local.ToString("HH:mm", Culture), "週" + "日一二三四五六"[(int)local.DayOfWeek]);
+    }
+
+    /// <summary>Milliseconds until the next minute starts, so a clock flips on time.</summary>
+    public static int UntilNextMinute(DateTimeOffset now) => 60_000 - now.Second * 1000 - now.Millisecond + 30;
+
     /// <summary>Token counts in Chinese units: "74.69 億", "2,210.0 萬", "8,600".</summary>
     public static string Tokens(long count) =>
         count >= 100_000_000 ? (count / 1e8).ToString("0.##", Culture) + " 億"
