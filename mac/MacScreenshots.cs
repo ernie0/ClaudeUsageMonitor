@@ -10,7 +10,7 @@ namespace ClaudeUsageMonitor;
 /// </summary>
 internal static class MacScreenshots
 {
-    public static async Task RunAsync(MonitorService service, MacShell shell, string folder)
+    public static async Task RunAsync(MonitorService service, MacShell shell, string folder, bool live = false)
     {
         Directory.CreateDirectory(folder);
         await service.PollOnceAsync(CancellationToken.None);
@@ -95,6 +95,8 @@ internal static class MacScreenshots
         motion.Time = null;
         analysisWindow.Close();
 
+        await WorkflowAsync(service, shell, folder, live);
+
         var settings = new SettingsWindow(service, overlay);
         settings.Show();
         await Task.Delay(600);
@@ -104,6 +106,73 @@ internal static class MacScreenshots
     }
 
     static double hoverClock = 20_000;
+
+    /// <summary>
+    /// The small workflow window ready to send, and the full view. With --workflow-live it also runs one
+    /// real conversation (small model, no user settings, no saved history) in a scratch folder.
+    /// </summary>
+    static async Task WorkflowAsync(MonitorService service, MacShell shell, string folder, bool live)
+    {
+        string work = Path.Combine(folder, "workflow-work");
+        Directory.CreateDirectory(work);
+        var mini = shell.OpenWorkflow();
+        mini.Position = new PixelPoint(60, 60);
+        mini.Prepare(work, "在這個資料夾建立 hello.txt，內容寫「你好」，完成後用一句話回報。");
+        await Task.Delay(500);
+        Save(mini, Path.Combine(folder, "workflow-mini.png"));
+        if (live)
+        {
+            ClaudeSession.ExtraArguments = ["--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--model", "haiku"];
+            var session = mini.Submit()!;
+            string log = Path.Combine(folder, "workflow-live.txt");
+            async Task<bool> Wait(Func<bool> done, string step)
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                while (!done() && clock.Elapsed < TimeSpan.FromSeconds(120))
+                    await Task.Delay(100);
+                File.AppendAllText(log, $"{step}: {(done() ? "ok" : "timeout")} after {clock.Elapsed.TotalSeconds:0.0} s, state {session.State}\n");
+                return done();
+            }
+            if (await Wait(() => session.State == JobState.NeedsPermission, "ask to write"))
+            {
+                await Task.Delay(400);
+                Save(mini, Path.Combine(folder, "workflow-mini-ask.png"));
+                mini.Act("allow:0");
+            }
+            await Wait(() => session.State == JobState.Waiting, "reply after allow");
+            File.AppendAllText(log, $"hello.txt: {(File.Exists(Path.Combine(work, "hello.txt")) ? File.ReadAllText(Path.Combine(work, "hello.txt")) : "missing")}\n");
+            await Task.Delay(400);
+            Save(mini, Path.Combine(folder, "workflow-mini-done.png"));
+            mini.Act("reply:0");
+            mini.Prepare(work, "把 hello.txt 的內容改成「哈囉」。");
+            await Task.Delay(300);
+            Save(mini, Path.Combine(folder, "workflow-mini-reply.png"));
+            mini.Submit();
+            // Claude may try another way after a refusal: refuse every request until it replies.
+            int denied = 0;
+            while (await Wait(() => session.State is JobState.NeedsPermission or JobState.Waiting, "ask or reply") && session.State == JobState.NeedsPermission)
+            {
+                mini.Act("deny:0");
+                denied++;
+                await Task.Delay(200);
+            }
+            File.AppendAllText(log, $"denied {denied} request(s), state {session.State}\n");
+            File.AppendAllText(log, $"hello.txt after deny: {File.ReadAllText(Path.Combine(work, "hello.txt"))}\n");
+            await Task.Delay(400);
+            Save(mini, Path.Combine(folder, "workflow-mini-deny.png"));
+        }
+        var detail = shell.OpenWorkflowDetail();
+        await Task.Delay(600);
+        Save(detail, Path.Combine(folder, live ? "workflow-detail.png" : "workflow.png"));
+        detail.Hide();
+        if (live)
+        {
+            mini.Act("close:0");
+            await Task.Delay(500);
+            Save(mini, Path.Combine(folder, "workflow-mini-closed.png"));
+        }
+        mini.Hide();
+    }
 
     /// <summary>The page entrance at fixed moments (ms), then its end state.</summary>
     static async Task Frames(Window window, GlassControl page, string prefix, int[] moments)

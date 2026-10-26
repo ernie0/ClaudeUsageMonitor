@@ -146,6 +146,13 @@ internal sealed class OverlayView : Control
         };
         ticker.Start();
         service.Changed += () => Dispatcher.UIThread.Post(OnServiceChanged);
+        service.Workflows.Changed += () => Dispatcher.UIThread.Post(() =>
+        {
+            InvalidateVisual();
+            // Claude waits for an answer: the small window comes back, without taking the keyboard.
+            if (service.Workflows.NeedsAnswer)
+                shell.RevealWorkflow();
+        });
         PointerExited += (_, _) =>
         {
             if (!scriptedHover)
@@ -165,6 +172,11 @@ internal sealed class OverlayView : Control
     Rect ModeToggle => Compact
         ? new Rect(Bounds.Width - 30, Bounds.Height - 28, 22, 20)
         : new Rect(Bounds.Width - Pad - 22, Pad + 3, 22, 20);
+
+    /// <summary>The ">_" button that opens the workflow window, left of the mode toggle.</summary>
+    Rect WorkflowButton => Compact
+        ? new Rect(Bounds.Width - 58, Bounds.Height - 28, 24, 20)
+        : new Rect(Bounds.Width - Pad - 50, Pad + 3, 24, 20);
 
     void OnServiceChanged()
     {
@@ -374,6 +386,12 @@ internal sealed class OverlayView : Control
             e.Handled = true;
             return;
         }
+        if (WorkflowButton.Contains(at))
+        {
+            shell.ToggleWorkflow();
+            e.Handled = true;
+            return;
+        }
         if (e.ClickCount == 2)
         {
             shell.OpenDetails();
@@ -403,7 +421,9 @@ internal sealed class OverlayView : Control
             popStart = fx.ElapsedMilliseconds;
             Kick();
         }
-        ToolTip.SetTip(this, ModeToggle.Contains(at) ? (Compact ? "切換為標準模式" : "切換為精簡模式") : TooltipText());
+        ToolTip.SetTip(this, ModeToggle.Contains(at) ? (Compact ? "切換為標準模式" : "切換為精簡模式")
+            : WorkflowButton.Contains(at) ? "Claude 工作流：不用開 VS Code 就能下指令" + (service.Workflows.Running is int n and > 0 ? $"（{n} 個工作進行中）" : "")
+            : TooltipText());
     }
 
     void SetHover(string? id)
@@ -450,6 +470,7 @@ internal sealed class OverlayView : Control
             else
                 PaintStandard(ctx, now);
             PaintModeToggle(ctx);
+            PaintWorkflowButton(ctx);
             PaintEffects(ctx);
         }
     }
@@ -467,7 +488,7 @@ internal sealed class OverlayView : Control
 
         string meta = snapshot == null ? "" : $"{snapshot.PlanLabel} · {snapshot.ObservedAt.ToLocalTime():HH:mm} 更新";
         double metaWidth = MacDraw.Measure(meta, MacTheme.Ui(), 9.5);
-        double metaX = ModeToggle.Left - 8 - metaWidth;
+        double metaX = WorkflowButton.Left - 6 - metaWidth;
         MacDraw.Text(ctx, meta, MacTheme.Ui(), 9.5, Color.FromRgb(0xC9, 0xC5, 0xE0), new Rect(metaX, Pad + 6, metaWidth + 4, 18), shadow: false);
         var dot = new Point(metaX - 10, Pad + 14);
         PaintClock(ctx, Pad + 24 + MacDraw.Measure("Claude 額度", MacTheme.Ui(FontWeight.Bold), 11) + 6, Pad + 2, dot.X - 12, now);
@@ -606,6 +627,34 @@ internal sealed class OverlayView : Control
             color = MacTheme.Coral;
         }
         ctx.DrawEllipse(MacTheme.Solid(color), new Pen(MacTheme.Solid(Color.FromArgb(120, 255, 255, 255)), 1), c, radius, radius);
+    }
+
+    /// <summary>
+    /// The ">_" workflow button: a quiet outline at rest; while Claude works it fills in violet with the
+    /// number of jobs, and turns amber when Claude waits for an answer.
+    /// </summary>
+    void PaintWorkflowButton(DrawingContext ctx)
+    {
+        var r = WorkflowButton;
+        int running = service.Workflows.Running;
+        bool asking = service.Workflows.NeedsAnswer;
+        var ink = Compact ? Colors.White : MacTheme.Muted;
+        if (running > 0)
+        {
+            ctx.DrawRectangle(MacTheme.Solid(asking ? Color.FromArgb(220, 0xFB, 0xBF, 0x24) : MacTheme.Alpha(MacTheme.Violet, 200)), null, r, 6, 6);
+            ink = asking ? Color.FromRgb(0x3A, 0x2C, 0x14) : Colors.White;
+        }
+        var pen = new Pen(MacTheme.Solid(ink), 1.6, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+        double cx = r.X + r.Width * 0.3, cy = r.Center.Y;
+        ctx.DrawLine(pen, new Point(cx - 3, cy - 4), new Point(cx + 1.5, cy));
+        ctx.DrawLine(pen, new Point(cx + 1.5, cy), new Point(cx - 3, cy + 4));
+        ctx.DrawLine(pen, new Point(cx + 4, cy + 4.5), new Point(cx + 10, cy + 4.5));
+        if (running > 1)
+        {
+            var badge = new Rect(r.Right - 7, r.Y - 5, 12, 12);
+            ctx.DrawEllipse(MacTheme.Solid(MacTheme.Coral), null, badge.Center, 6, 6);
+            MacDraw.Text(ctx, running > 9 ? "9+" : running.ToString(), MacTheme.Ui(FontWeight.Bold), 6.5, Colors.White, badge, TextAlignment.Center, middle: true, shadow: false);
+        }
     }
 
     void PaintModeToggle(DrawingContext ctx)

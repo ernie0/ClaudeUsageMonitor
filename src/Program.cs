@@ -225,9 +225,15 @@ internal static class Program
             mini.Prepare(work, "把 hello.txt 的內容改成「哈囉」。");
             Grab(mini, Path.Combine(folder, "workflow-mini-reply.png"), settleMs: 200);
             mini.Submit();
-            if (Wait(() => session.State == JobState.NeedsPermission, "ask to edit"))
+            // Claude may try another way after a refusal: refuse every request until it replies.
+            int denied = 0;
+            while (Wait(() => session.State is JobState.NeedsPermission or JobState.Waiting, "ask or reply") && session.State == JobState.NeedsPermission)
+            {
                 mini.Act("deny:0");
-            Wait(() => session.State == JobState.Waiting, "reply after deny");
+                denied++;
+                Pump(200);
+            }
+            File.AppendAllText(log, $"denied {denied} request(s), state {session.State}\n");
             File.AppendAllText(log, $"hello.txt after deny: {File.ReadAllText(Path.Combine(work, "hello.txt"))}\n");
             Grab(mini, Path.Combine(folder, "workflow-mini-deny.png"), settleMs: 300);
         }

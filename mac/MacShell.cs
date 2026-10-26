@@ -97,7 +97,7 @@ internal sealed class App(string[] args) : Application
                 string folder = index + 1 < args.Length ? args[index + 1] : Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-mac-screens");
                 Dispatcher.UIThread.Post(async () =>
                 {
-                    await MacScreenshots.RunAsync(service, shell, folder);
+                    await MacScreenshots.RunAsync(service, shell, folder, args.Contains("--workflow-live"));
                     desktop.Shutdown();
                 });
             }
@@ -137,6 +137,8 @@ internal sealed class MacShell : IDisposable
     DetailsWindow? details;
     SettingsWindow? settings;
     AnalysisWindow? analysis;
+    WorkflowMiniWindow? workflow;
+    WorkflowDetailWindow? workflowDetail;
 
     public MacShell(MonitorService service, IClassicDesktopStyleApplicationLifetime desktop)
     {
@@ -179,12 +181,13 @@ internal sealed class MacShell : IDisposable
         ("使用紀錄…", () => OpenHistory()),
         ("額度詳情…", OpenDetails),
         ("用量分析…", OpenAnalysis),
+        ("Claude 工作流…", () => OpenWorkflow()),
         ("設定…", OpenSettings),
         ("開啟官方用量頁", () => Open(UsagePage)),
         ("開啟資料夾", () => Open(service.Root)),
         ("-", () => { }),
         ("關於", ShowAbout),
-        ("離開", () => desktop.Shutdown()),
+        ("離開", () => _ = QuitAsync()),
     ];
 
     public ContextMenu BuildContextMenu()
@@ -233,6 +236,61 @@ internal sealed class MacShell : IDisposable
     public void OpenSettings() => Bring(ref settings, () => new SettingsWindow(service, Overlay));
 
     public void OpenAnalysis() => Bring(ref analysis, () => new AnalysisWindow(service));
+
+    /// <summary>Shows the small workflow window next to the overlay without taking the keyboard (Claude waits for an answer).</summary>
+    public WorkflowMiniWindow RevealWorkflow()
+    {
+        workflow ??= new WorkflowMiniWindow(service, this);
+        if (!workflow.IsVisible)
+        {
+            workflow.Place(Overlay);
+            workflow.Show();
+        }
+        return workflow;
+    }
+
+    /// <summary>Opens the small workflow window with the cursor in its line.</summary>
+    public WorkflowMiniWindow OpenWorkflow()
+    {
+        var window = RevealWorkflow();
+        window.FocusInput();
+        return window;
+    }
+
+    /// <summary>The overlay's ">_" button: shows the small window, or hides it when it is showing.</summary>
+    public void ToggleWorkflow()
+    {
+        if (workflow is { IsVisible: true })
+            workflow.Hide();
+        else
+            OpenWorkflow();
+    }
+
+    public WorkflowDetailWindow OpenWorkflowDetail()
+    {
+        if (workflowDetail == null)
+        {
+            workflowDetail = new WorkflowDetailWindow(service);
+            workflowDetail.Closing += (_, e) =>
+            {
+                // Closing only hides the full view; the conversations go on.
+                e.Cancel = true;
+                workflowDetail.Hide();
+            };
+        }
+        workflowDetail.Show();
+        workflowDetail.Activate();
+        return workflowDetail;
+    }
+
+    /// <summary>Leaving stops the conversations in the workflow window; ask first while Claude is working.</summary>
+    async Task QuitAsync()
+    {
+        int running = service.Workflows.Running;
+        if (running > 0 && !await MacDialog.Confirm(null, "Claude 額度", $"Claude 工作流還有 {running} 個工作在進行，離開會停止它們。\n確定要離開嗎？", "離開", "取消"))
+            return;
+        desktop.Shutdown();
+    }
 
     static void Bring<T>(ref T? window, Func<T> create) where T : Window
     {
@@ -397,6 +455,53 @@ internal static class Autostart
 /// <summary>A minimal message box (Avalonia has none built in).</summary>
 internal static class MacDialog
 {
+    /// <summary>A yes/no question; true when the first (accent) button was chosen.</summary>
+    public static async Task<bool> Confirm(Window? owner, string title, string message, string yes, string no)
+    {
+        bool result = false;
+        var yesButton = new Button { Content = yes, MinWidth = 80, Classes = { "accent" } };
+        var noButton = new Button { Content = no, MinWidth = 80 };
+        var window = new Window
+        {
+            Title = title,
+            Width = 440,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            Topmost = true,
+            WindowStartupLocation = owner != null ? WindowStartupLocation.CenterOwner : WindowStartupLocation.CenterScreen,
+            Background = MacTheme.Solid(MacTheme.Canvas),
+            Icon = MacShell.AppIcon(),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, FontFamily = MacTheme.UiFont, FontSize = MacDraw.Pt(10), Foreground = MacTheme.Solid(MacTheme.Text) },
+                    new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, Spacing = 8, Children = { noButton, yesButton } },
+                },
+            },
+        };
+        yesButton.Click += (_, _) =>
+        {
+            result = true;
+            window.Close();
+        };
+        noButton.Click += (_, _) => window.Close();
+        if (owner != null)
+        {
+            await window.ShowDialog(owner);
+        }
+        else
+        {
+            var closed = new TaskCompletionSource();
+            window.Closed += (_, _) => closed.TrySetResult();
+            window.Show();
+            await closed.Task;
+        }
+        return result;
+    }
+
     public static void Show(Window? owner, string title, string message)
     {
         var ok = new Button { Content = "好", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right, MinWidth = 80, Classes = { "accent" } };
