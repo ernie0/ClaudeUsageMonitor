@@ -39,7 +39,11 @@
 
 ![使用紀錄](docs/screenshots/history.png)
 
-**額度詳情**：每個額度的重置時間、使用速度、照目前速度會不會用完、每小時可用多少；資料來源預設收起。
+**額度詳情**：每個額度的重置時間、使用速度、照目前速度會不會用完、每小時可用多少、本期用了多少 Token；資料來源預設收起。
+
+**用量分析**（右鍵選單或詳情裡的「用量分析」）：本週進度是否超前、每天平均用量、最常用的時段、5 小時額度用完幾次、區間 Token 數；每日用量圖（含當天 Token）、一週時段熱力圖、本週額度週期回顧、Token 分類（輸入／輸出／快取寫入／快取讀取）與各模型占比，以及 Claude Code 自己分析「是什麼在吃額度」（長對話、排程任務、大量子代理…附說明與建議，和 `/usage` 同一份資料）。
+
+![用量分析](docs/screenshots/analysis.png)
 
 ![額度詳情](docs/screenshots/details.png)
 
@@ -51,8 +55,8 @@
 
 | 項目 | 說明 |
 | --- | --- |
-| 版本 | 0.1.1（卡片光芒動畫；0.1.0 為第一版） |
-| 安裝 | 解壓縮 `ClaudeUsageMonitor-v0.1.1-win-x64.zip` 到固定資料夾（例如 `D:\工具\ClaudeUsageMonitor`），雙擊 `ClaudeUsageMonitor.exe`。可對照同名 `.sha256` 檔核對 SHA-256。 |
+| 版本 | 0.2.0（用量分析與 Token 數；0.1.1 卡片光芒、0.1.0 第一版） |
+| 安裝 | 解壓縮 `ClaudeUsageMonitor-v0.2.0-win-x64.zip` 到固定資料夾（例如 `D:\工具\ClaudeUsageMonitor`），雙擊 `ClaudeUsageMonitor.exe`。可對照同名 `.sha256` 檔核對 SHA-256。 |
 | 開機自動啟動 | 設定 →「登入 Windows 時自動啟動」（寫入目前使用者的啟動項目，不需要系統管理員）。 |
 | 更新 | 先從選單「離開」，用新版 exe 覆蓋舊檔再開啟。設定與紀錄存在 `%LOCALAPPDATA%\ClaudeUsageMonitor`，不在 exe 旁邊，更新不會動到。 |
 | 移除 | 先在設定取消開機自動啟動、從選單「離開」，再刪除程式資料夾；要連紀錄一起刪就刪 `%LOCALAPPDATA%\ClaudeUsageMonitor`。 |
@@ -63,7 +67,7 @@
 
 | 項目 | 說明 |
 | --- | --- |
-| 下載哪一個 | 蘋果選單 →「關於這台 Mac」：晶片寫 Apple M1／M2／M3／M4… 用 `ClaudeUsageMonitor-v0.1.1-macos-arm64.zip`；寫 Intel 用 `…-macos-x64.zip`。可對照 `.sha256` 檔核對。 |
+| 下載哪一個 | 蘋果選單 →「關於這台 Mac」：晶片寫 Apple M1／M2／M3／M4… 用 `ClaudeUsageMonitor-v0.2.0-macos-arm64.zip`；寫 Intel 用 `…-macos-x64.zip`。可對照 `.sha256` 檔核對。 |
 | 安裝 | 連按兩下 zip 解壓縮，把 `ClaudeUsageMonitor.app` 拖到「應用程式」資料夾。 |
 | 第一次開啟 | 這個 App 沒有 Apple 開發者簽署，第一次開會被擋。到「系統設定 → 隱私權與安全性」往下找到 ClaudeUsageMonitor，按「強制打開／仍要打開」，之後就能正常開。也可以在「終端機」貼上 `xattr -dr com.apple.quarantine /Applications/ClaudeUsageMonitor.app` 後再開。 |
 | 開啟後 | 選單列出現彩色數字圖示，浮窗在螢幕右上角。在浮窗按右鍵（或按住 Control 點一下）開選單；點選單列圖示也有同樣的選單。 |
@@ -124,7 +128,9 @@
 - 紀錄存在 `%LOCALAPPDATA%\ClaudeUsageMonitor`：`settings.json`（設定）、`history\*.jsonl`（每次觀察的百分比與重置時間）、`last_good.json`、`status.json`（給其他程式讀的目前狀態）、`alerts.json`、`logs\`（只記錯誤代碼）。預設保留 90 天。
 - 帳號只以「本機隨機鹽＋email＋組織」的雜湊值區分，**不保存 email**。Claude Code 的錯誤輸出一律丟棄，不寫入紀錄。
 - 本工具本身不連網、沒有遙測、不上傳任何資料。連網的是官方 Claude Code（照它平常的方式連到 Anthropic）。
-- 為了在你開始使用時立刻更新，工具會監看 `~/.claude/projects` 資料夾**有沒有檔案變動**；只用來觸發更新，不讀取任何對話內容。
+- 為了在你開始使用時立刻更新，工具會監看 `~/.claude/projects` 資料夾**有沒有檔案變動**。
+- **Token 數**：開啟用量分析、詳情或使用紀錄時，工具會讀這台電腦上 Claude Code 的對話紀錄（`~/.claude/projects/**/*.jsonl`），**只取每次回應的時間、模型與 Token 數字**，不保存、不顯示、不上傳任何對話內容；同一則回應會依編號去重。只含這台電腦，不含其他裝置與 claude.ai 網頁。
+- **是什麼在吃額度**：由 Claude Code 自己掃描本機近 7 天的對話紀錄後回報（約 3～10 秒），工具只保存它回報的比例與名稱（`behaviors.json`）。
 - 已知副作用：每次查詢時，Claude Code 會更新它自己 `~/.claude.json` 裡的功能旗標快取時間（`cachedGrowthBookFeaturesAt`），這和平常每次啟動 Claude Code 一樣。
 - CSV 匯出含使用時間，分享前請先檢查。
 
@@ -150,7 +156,8 @@ dotnet build mac\ClaudeUsageMonitor.Mac.csproj    # Mac 版（Avalonia，也能�
 | 參數 | 用途 |
 | --- | --- |
 | `--demo` | 用合成資料執行（資料放在暫存資料夾），不需要 Claude 帳號 |
-| `--probe <檔案.json>` | 實際查詢一次，把結果寫到檔案後結束（排錯用，不寫入紀錄） |
+| `--probe <檔案.json>` | 實際查詢一次額度與「是什麼在吃額度」，把結果寫到檔案後結束（排錯用，不寫入紀錄） |
+| `--probe-tokens <檔案.json> [--days 7]` | 讀本機對話紀錄，輸出區間 Token 數、每天與各模型（排錯用） |
 | `--screenshot <資料夾>` | 用示範資料把每個視窗輸出成 PNG 後結束 |
 | 環境變數 `CLAUDE_USAGE_MONITOR_HOME` | 改變資料資料夾位置（測試用） |
 

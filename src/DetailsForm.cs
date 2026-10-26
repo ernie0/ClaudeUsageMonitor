@@ -60,7 +60,9 @@ internal sealed class DetailsForm : Form
         official.Click += (_, _) => OverlayForm.OpenUrl("https://claude.ai/settings/usage");
         var history = Theme.Button("使用紀錄");
         history.Click += (_, _) => HistoryForm.Open(service);
-        buttons.Controls.AddRange([close, refresh, official, history]);
+        var analysis = Theme.Button("用量分析");
+        analysis.Click += (_, _) => AnalysisForm.Open(service);
+        buttons.Controls.AddRange([close, refresh, official, history, analysis]);
 
         // Where the data comes from is rarely needed, so it stays folded until asked for.
         sourceToggle.Click += (_, _) => ToggleSource();
@@ -74,11 +76,14 @@ internal sealed class DetailsForm : Form
         Controls.Add(cards);
         Controls.Add(buttons);
 
-        Load += (_, _) =>
+        Load += async (_, _) =>
         {
             Render();
             FitHeight();
             cards.Animate();
+            await service.ScanTokensAsync(8);
+            if (!IsDisposed)
+                Render();
         };
         HandleCreated += (_, _) => Theme.ApplyWindowChrome(this);
         ticker.Tick += (_, _) => Render();
@@ -256,7 +261,7 @@ internal sealed class QuotaCards : Control
                 ("使用速度", w.RemainingPercent <= 0 ? "—" : forecast.RatePerHour is { } rate ? $"{Format.Rate(rate)}（{Format.Basis(forecast.BasisMinutes)}）" : "觀察中", Theme.Text),
                 ("照目前速度", Outlook(w, forecast, now, out var outlookColor), outlookColor),
                 ("每小時可用", forecast.BudgetPerHour is { } budget && w.RemainingPercent > 0 ? $"{Format.Rate(budget)} 以下就撐得到重置" : "—", Theme.Text),
-                ("已使用", w.UsedPercent.ToString("0", CultureInfo.InvariantCulture) + "%", Theme.Text),
+                ("本期 Token", Insights.PeriodTokens(service, w, now), Theme.Text),
             };
             float colW = (panel.Width - 28 * s) / 2;
             for (int i = 0; i < facts.Count; i++)

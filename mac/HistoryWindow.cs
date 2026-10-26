@@ -93,8 +93,15 @@ internal sealed class HistoryWindow : Window
         _ => label.Replace("本週·", "").Replace("每週·", "") + " 本週",
     };
 
+    async void ScanTokens()
+    {
+        await service.ScanTokensAsync((int)Math.Ceiling(range.TotalDays));
+        Render();
+    }
+
     void Reload()
     {
+        ScanTokens();
         var now = DateTimeOffset.UtcNow;
         var account = service.Current?.AccountKey;
         rows = service.History.Load(now - range, now).Where(r => account == null || r.Account == account).ToList();
@@ -150,6 +157,7 @@ internal sealed class HistoryWindow : Window
                 ($"用掉 {spent:0} 個百分點", spent > 0 ? Level.Low : Level.Plenty),
                 ($"重置 {changes.Count(c => c.IsReset)} 次", Level.Plenty),
                 ($"未監測 {changes.Count(c => c.IsGap)} 段", Level.Unknown),
+                ($"區間 Token {(service.Tokens.LastScan == null ? "讀取中…" : Format.Tokens(service.Tokens.Sum(now - range, now).Total))}", Level.Fair),
             ];
         foreach (var (text, level) in items)
         {

@@ -43,7 +43,60 @@ internal sealed class MonitorService : IDisposable
             Status = "上次的資料，正在重新取得";
             Forecasts = BuildForecasts(Current, DateTimeOffset.UtcNow);
         }
+        Behaviors = AtomicJson.Load<UsageBehaviors?>(Path.Combine(root, "behaviors.json"), () => null);
+        Tokens = demo ? TokenLedger.Synthetic(DateTimeOffset.UtcNow) : new TokenLedger();
     }
+
+    /// <summary>Token counts from this computer's Claude Code transcripts (read on demand by the analysis).</summary>
+    public TokenLedger Tokens { get; }
+
+    /// <summary>The last attribution from Claude Code (kept on disk so the analysis opens with it).</summary>
+    public UsageBehaviors? Behaviors { get; private set; }
+
+    public bool AnalyzingBehaviors { get; private set; }
+
+    readonly SemaphoreSlim behaviorGate = new(1, 1);
+
+    /// <summary>Asks Claude Code for its attribution; takes several seconds, so only when the user asks.</summary>
+    public async Task RefreshBehaviorsAsync(CancellationToken ct = default)
+    {
+        if (!await behaviorGate.WaitAsync(0, ct))
+            return;
+        AnalyzingBehaviors = true;
+        Changed?.Invoke();
+        try
+        {
+            if (await source.ReadBehaviorsAsync(ct) is { } behaviors)
+            {
+                Behaviors = behaviors;
+                TrySave(Path.Combine(Root, "behaviors.json"), behaviors);
+            }
+            log.Write("behaviors", "OK");
+        }
+        catch (MonitorException e)
+        {
+            log.Write("behaviors", e.Code);
+        }
+        finally
+        {
+            AnalyzingBehaviors = false;
+            behaviorGate.Release();
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>The habits analysis over the last <paramref name="days"/> days for the current account.</summary>
+    public UsageAnalysis Analyze(int days)
+    {
+        var now = DateTimeOffset.UtcNow;
+        string? account = Current?.AccountKey;
+        // Cycle review looks back five weeks whatever the range.
+        var samples = History.Load(now.AddDays(-Math.Max(days, 36)), now).Where(s => account == null || s.Account == account).ToList();
+        return UsageAnalyzer.Analyze(samples, now, days);
+    }
+
+    /// <summary>Re-reads new transcript lines (fast after the first time), then the analysis can build its token report.</summary>
+    public Task ScanTokensAsync(int days) => Tokens.ScanAsync(TimeSpan.FromDays(Math.Max(days, 8) + 1));
 
     public string Root { get; }
     public bool Demo { get; }

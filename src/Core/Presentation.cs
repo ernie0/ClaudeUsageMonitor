@@ -79,6 +79,28 @@ internal static class Insights
         _ => TileIcon.Chip,
     };
 
+    /// <summary>
+    /// Tokens this computer's Claude Code used in the window's current period (since its last reset);
+    /// per-model windows count only that model.
+    /// </summary>
+    public static string PeriodTokens(MonitorService service, QuotaWindow w, DateTimeOffset now)
+    {
+        if (service.Tokens.LastScan == null)
+            return "讀取中…";
+        if (w.ResetsAt is not { } reset)
+            return "—";
+        string? family = w.Id switch
+        {
+            "seven_day_opus" => "opus",
+            "seven_day_sonnet" => "sonnet",
+            _ when w.Id.StartsWith("model:", StringComparison.Ordinal) => w.Id["model:".Length..],
+            _ => null,
+        };
+        var counts = service.Tokens.Sum(reset - TimeSpan.FromMinutes(w.DurationMinutes), now.AddMinutes(1),
+            family == null ? null : model => model.Contains(family, StringComparison.OrdinalIgnoreCase));
+        return Format.Tokens(counts.Total);
+    }
+
     public static string RateText(MonitorService service, QuotaWindow w)
     {
         if (w.RemainingPercent <= 0)
@@ -151,6 +173,22 @@ internal static class Format
         if (local.Date == today.AddDays(1))
             return "明天 " + time;
         return local.ToString("MM/dd", Culture) + "（" + "日一二三四五六"[(int)local.DayOfWeek] + "）" + time;
+    }
+
+    /// <summary>Token counts in Chinese units: "74.69 億", "2,210.0 萬", "8,600".</summary>
+    public static string Tokens(long count) =>
+        count >= 100_000_000 ? (count / 1e8).ToString("0.##", Culture) + " 億"
+        : count >= 10_000 ? (count / 1e4).ToString("#,0.#", Culture) + " 萬"
+        : count.ToString("#,0", Culture);
+
+    /// <summary>"claude-opus-5-5" → "Opus 5.5", "claude-fable-5-1-20261001" → "Fable 5.1".</summary>
+    public static string ModelName(string id)
+    {
+        var parts = id.Replace("claude-", "").Split('-').Where(p => !(p.Length == 8 && p.All(char.IsDigit))).ToArray();
+        if (parts.Length == 0 || parts[0].Length == 0)
+            return id;
+        string family = char.ToUpperInvariant(parts[0][0]) + parts[0][1..];
+        return parts.Length > 1 ? family + " " + string.Join(".", parts[1..]) : family;
     }
 
     public static string Money(decimal? amount, string currency) =>

@@ -7,6 +7,10 @@ namespace ClaudeUsageMonitor;
 internal interface IUsageSource
 {
     Task<UsageSnapshot> ReadAsync(string salt, CancellationToken ct);
+
+    /// <summary>Claude Code's attribution of what drives usage (the /usage analysis); slower, on demand only.</summary>
+    Task<UsageBehaviors?> ReadBehaviorsAsync(CancellationToken ct);
+
     string ExecutablePath { get; }
 }
 
@@ -18,6 +22,9 @@ internal interface IUsageSource
 internal sealed class ClaudeUsageClient(string workDir, Func<string?> configuredPath) : IUsageSource
 {
     const int TimeoutSeconds = 30;
+
+    // The attribution scans every local transcript touched in the last seven days.
+    const int BehaviorTimeoutSeconds = 120;
 
     static readonly string[] Arguments =
     [
@@ -36,6 +43,25 @@ internal sealed class ClaudeUsageClient(string workDir, Func<string?> configured
     public string ExecutablePath { get; private set; } = "";
 
     public async Task<UsageSnapshot> ReadAsync(string salt, CancellationToken ct)
+    {
+        var responses = await ExchangeAsync(TimeSpan.FromSeconds(TimeoutSeconds), ct,
+            ("init", new { subtype = "initialize" }),
+            ("version", new { subtype = "get_binary_version" }),
+            ("usage", new { subtype = "get_usage", skip_behaviors = true }));
+        var account = UsageParser.Get(Body(responses["init"]), "account");
+        var usage = Body(responses["usage"]);
+        string version = responses.TryGetValue("version", out var v) ? VersionOf(v) : "";
+        return UsageParser.Parse(account, usage, salt, version, DateTimeOffset.UtcNow);
+    }
+
+    public async Task<UsageBehaviors?> ReadBehaviorsAsync(CancellationToken ct)
+    {
+        var responses = await ExchangeAsync(TimeSpan.FromSeconds(BehaviorTimeoutSeconds), ct, ("usage", new { subtype = "get_usage" }));
+        return BehaviorParser.Parse(Body(responses["usage"]), DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>Runs one short-lived claude process, sends the control requests and collects their responses.</summary>
+    async Task<Dictionary<string, JsonElement>> ExchangeAsync(TimeSpan limit, CancellationToken ct, params (string Id, object Request)[] requests)
     {
         string exe = ClaudeLocator.FindVerified(configuredPath());
         ExecutablePath = exe;
@@ -73,18 +99,12 @@ internal sealed class ClaudeUsageClient(string workDir, Func<string?> configured
             // stderr is drained and discarded: it may contain account details and is never logged.
             _ = Task.Run(() => DrainAsync(process.StandardError));
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
+            timeout.CancelAfter(limit);
             try
             {
-                await SendAsync(process, "init", new { subtype = "initialize" }, timeout.Token);
-                await SendAsync(process, "version", new { subtype = "get_binary_version" }, timeout.Token);
-                await SendAsync(process, "usage", new { subtype = "get_usage", skip_behaviors = true }, timeout.Token);
-                var responses = await ReadResponsesAsync(process, ["init", "version", "usage"], timeout.Token);
-
-                var account = UsageParser.Get(Body(responses["init"]), "account");
-                var usage = Body(responses["usage"]);
-                string version = responses.TryGetValue("version", out var v) ? VersionOf(v) : "";
-                return UsageParser.Parse(account, usage, salt, version, DateTimeOffset.UtcNow);
+                foreach (var (id, request) in requests)
+                    await SendAsync(process, id, request, timeout.Token);
+                return await ReadResponsesAsync(process, requests.Select(r => r.Id).ToArray(), timeout.Token);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -117,8 +137,8 @@ internal sealed class ClaudeUsageClient(string workDir, Func<string?> configured
             string? line = await process.StandardOutput.ReadLineAsync(ct);
             if (line is null)
             {
-                // get_binary_version is optional; the other two are not.
-                if (found.ContainsKey("init") && found.ContainsKey("usage"))
+                // get_binary_version is optional; every other request must have been answered.
+                if (wanted.Where(id => id != "version").All(found.ContainsKey))
                     break;
                 throw new MonitorException("EXITED_EARLY");
             }

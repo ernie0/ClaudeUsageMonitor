@@ -52,6 +52,8 @@ internal sealed class DetailsWindow : Window
         official.Click += (_, _) => MacShell.Open("https://claude.ai/settings/usage");
         var history = new Button { Content = "使用紀錄" };
         history.Click += (_, _) => shell.OpenHistory();
+        var analysis = new Button { Content = "用量分析" };
+        analysis.Click += (_, _) => shell.OpenAnalysis();
         var close = new Button { Content = "關閉" };
         close.Click += (_, _) => Close();
 
@@ -67,15 +69,17 @@ internal sealed class DetailsWindow : Window
                     HorizontalAlignment = HorizontalAlignment.Right,
                     Spacing = 8,
                     Margin = new Thickness(12),
-                    Children = { history, official, refresh, close },
+                    Children = { analysis, history, official, refresh, close },
                 },
             },
         };
 
-        Opened += (_, _) =>
+        Opened += async (_, _) =>
         {
             Render();
             cards.Animate();
+            await service.ScanTokensAsync(8);
+            Render();
         };
         ticker.Tick += (_, _) => Render();
         ticker.Start();
@@ -190,7 +194,7 @@ internal sealed class QuotaCardsView : Control
                 ("使用速度", w.RemainingPercent <= 0 ? "—" : forecast.RatePerHour is { } rate ? $"{Format.Rate(rate)}（{Format.Basis(forecast.BasisMinutes)}）" : "觀察中", MacTheme.Text),
                 ("照目前速度", Outlook(w, forecast, now, out var outlookColor), outlookColor),
                 ("每小時可用", forecast.BudgetPerHour is { } budget && w.RemainingPercent > 0 ? $"{Format.Rate(budget)} 以下就撐得到重置" : "—", MacTheme.Text),
-                ("已使用", w.UsedPercent.ToString("0", CultureInfo.InvariantCulture) + "%", MacTheme.Text),
+                ("本期 Token", Insights.PeriodTokens(service, w, now), MacTheme.Text),
             };
             double colW = (panel.Width - 28) / 2;
             for (int i = 0; i < facts.Count; i++)

@@ -72,12 +72,28 @@ internal static class MacScreenshots
         Save(details, Path.Combine(folder, "details.png"));
         details.Close();
 
+        var analysisWindow = new AnalysisWindow(service);
+        analysisWindow.Show();
+        await analysisWindow.PrepareAsync();
+        await Task.Delay(600);
+        Save(analysisWindow, Path.Combine(folder, "analysis.png"));
+        SaveControl(analysisWindow.Page, Path.Combine(folder, "analysis-full.png"));
+        analysisWindow.Close();
+
         var settings = new SettingsWindow(service, overlay);
         settings.Show();
         await Task.Delay(600);
         Save(settings, Path.Combine(folder, "settings.png"));
         settings.Close();
         overlay.Hide();
+    }
+
+    static void SaveControl(Control control, string path)
+    {
+        var size = control.Bounds.Size;
+        using var bitmap = new RenderTargetBitmap(new PixelSize((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height)), new Vector(96, 96));
+        bitmap.Render(control);
+        bitmap.Save(path);
     }
 
     static void Save(Window window, string path)

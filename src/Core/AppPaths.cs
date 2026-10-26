@@ -32,6 +32,34 @@ internal static class AppPaths
         return demo;
     }
 
+    /// <summary>Reads this computer's transcripts and writes the token report for the last <paramref name="days"/> days.</summary>
+    public static int ProbeTokens(string output, int days)
+    {
+        var ledger = new TokenLedger();
+        var started = DateTimeOffset.UtcNow;
+        ledger.ScanAsync(TimeSpan.FromDays(days + 1)).GetAwaiter().GetResult();
+        var firstScan = DateTimeOffset.UtcNow - started;
+        started = DateTimeOffset.UtcNow;
+        ledger.ScanAsync(TimeSpan.FromDays(days + 1)).GetAwaiter().GetResult();
+        var secondScan = DateTimeOffset.UtcNow - started;
+        var report = TokenReport.Build(ledger, null, days, DateTimeOffset.UtcNow);
+        var result = new
+        {
+            root = ledger.Root,
+            error = ledger.Error,
+            first_scan_seconds = firstScan.TotalSeconds,
+            rescan_seconds = secondScan.TotalSeconds,
+            days,
+            range = report.Range,
+            range_total = report.Range.Total,
+            per_day = report.Days.Select(d => new { day = d.Day.ToString("yyyy-MM-dd"), total = d.Total }),
+            models = report.Models.Select(m => new { model = m.Model, total = m.Counts.Total, output = m.Counts.Output }),
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        File.WriteAllText(output, JsonSerializer.Serialize(result, AtomicJson.Options));
+        return ledger.Error.Length == 0 ? 0 : 2;
+    }
+
     /// <summary>One real query without touching the history; for troubleshooting and verification.</summary>
     public static int Probe(string output, string? claudePath)
     {
@@ -45,13 +73,18 @@ internal static class AppPaths
         try
         {
             var snapshot = client.ReadAsync(settings.Salt, CancellationToken.None).GetAwaiter().GetResult();
+            double seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
+            started = DateTimeOffset.UtcNow;
+            var behaviors = client.ReadBehaviorsAsync(CancellationToken.None).GetAwaiter().GetResult();
             result = new
             {
                 ok = true,
-                seconds = (DateTimeOffset.UtcNow - started).TotalSeconds,
+                seconds,
+                behaviors_seconds = (DateTimeOffset.UtcNow - started).TotalSeconds,
                 claude = client.ExecutablePath,
                 signature_warning = ClaudeLocator.Warning,
                 snapshot,
+                behaviors,
             };
             code = 0;
         }

@@ -22,6 +22,8 @@ internal static class Program
     public static int Main(string[] args)
     {
         string? Arg(string name) => Array.IndexOf(args, name) is int i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        if (args.Contains("--probe-tokens"))
+            return AppPaths.ProbeTokens(Arg("--probe-tokens") ?? Path.Combine(AppPaths.DataRoot(false), "tokens.json"), int.TryParse(Arg("--days"), out int d) ? d : 7);
         if (args.Contains("--probe"))
             return AppPaths.Probe(Arg("--probe") ?? Path.Combine(AppPaths.DataRoot(false), "probe.json"), Arg("--claude"));
 
@@ -134,6 +136,7 @@ internal sealed class MacShell : IDisposable
     HistoryWindow? history;
     DetailsWindow? details;
     SettingsWindow? settings;
+    AnalysisWindow? analysis;
 
     public MacShell(MonitorService service, IClassicDesktopStyleApplicationLifetime desktop)
     {
@@ -175,6 +178,7 @@ internal sealed class MacShell : IDisposable
         ("-", () => { }),
         ("使用紀錄…", OpenHistory),
         ("額度詳情…", OpenDetails),
+        ("用量分析…", OpenAnalysis),
         ("設定…", OpenSettings),
         ("開啟官方用量頁", () => Open(UsagePage)),
         ("開啟資料夾", () => Open(service.Root)),
@@ -222,6 +226,8 @@ internal sealed class MacShell : IDisposable
     public void OpenDetails() => Bring(ref details, () => new DetailsWindow(service, this));
 
     public void OpenSettings() => Bring(ref settings, () => new SettingsWindow(service, Overlay));
+
+    public void OpenAnalysis() => Bring(ref analysis, () => new AnalysisWindow(service));
 
     static void Bring<T>(ref T? window, Func<T> create) where T : Window
     {

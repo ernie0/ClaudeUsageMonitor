@@ -108,8 +108,16 @@ internal sealed class HistoryForm : Form
         BeginInvoke(Reload);
     }
 
+    async void ScanTokens()
+    {
+        await service.ScanTokensAsync((int)Math.Ceiling(range.TotalDays));
+        if (IsHandleCreated && !IsDisposed)
+            Render();
+    }
+
     void Reload()
     {
+        ScanTokens();
         var now = DateTimeOffset.UtcNow;
         var account = service.Current?.AccountKey;
         // Only the current account's history is shown; another login would mix two quotas.
@@ -189,6 +197,7 @@ internal sealed class HistoryForm : Form
                 ($"用掉 {spent:0} 個百分點", spent > 0 ? Level.Low : Level.Plenty),
                 ($"重置 {resets} 次", Level.Plenty),
                 ($"未監測 {gaps} 段", Level.Unknown),
+                ($"區間 Token {(service.Tokens.LastScan == null ? "讀取中…" : Format.Tokens(service.Tokens.Sum(now - range, now).Total))}", Level.Fair),
             ]);
     }
 

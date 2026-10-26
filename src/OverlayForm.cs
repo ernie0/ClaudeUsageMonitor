@@ -81,6 +81,7 @@ internal sealed class OverlayForm : Form
         menu.Items.Add(new ToolStripSeparator());
         Item("使用紀錄…", () => HistoryForm.Open(service));
         Item("額度詳情…", () => DetailsForm.Open(service));
+        Item("用量分析…", () => AnalysisForm.Open(service));
         Item("設定…", () =>
         {
             if (SettingsForm.Edit(service, this))

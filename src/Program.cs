@@ -19,6 +19,8 @@ internal static class Program
         string? Arg(string name) => Array.IndexOf(args, name) is int i and >= 0 && i + 1 < args.Length ? args[i + 1] : null;
         bool demo = args.Contains("--demo") || args.Contains("--screenshot");
 
+        if (args.Contains("--probe-tokens"))
+            return AppPaths.ProbeTokens(Arg("--probe-tokens") ?? Path.Combine(AppPaths.DataRoot(false), "tokens.json"), int.TryParse(Arg("--days"), out int d) ? d : 7);
         if (args.Contains("--probe"))
             return AppPaths.Probe(Arg("--probe") ?? Path.Combine(AppPaths.DataRoot(false), "probe.json"), Arg("--claude"));
 
@@ -109,6 +111,12 @@ internal static class Program
         }
         Capture(new HistoryForm(service), Path.Combine(folder, "history.png"));
         Capture(new DetailsForm(service), Path.Combine(folder, "details.png"));
+        var analysis = new AnalysisForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) };
+        analysis.Show();
+        analysis.PrepareAsync().GetAwaiter().GetResult();
+        Grab(analysis, Path.Combine(folder, "analysis.png"));
+        analysis.SaveFullPage(Path.Combine(folder, "analysis-full.png"));
+        analysis.Close();
         Capture(new SettingsForm(service), Path.Combine(folder, "settings.png"));
         return 0;
     }

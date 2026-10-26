@@ -24,6 +24,18 @@ internal sealed class DemoSource : IUsageSource
 
     public Task<UsageSnapshot> ReadAsync(string salt, CancellationToken ct) => Task.FromResult(At(DateTimeOffset.UtcNow));
 
+    /// <summary>Attribution shaped like a real get_usage answer.</summary>
+    public Task<UsageBehaviors?> ReadBehaviorsAsync(CancellationToken ct)
+    {
+        var day = new BehaviorWindow(1_350, 7,
+            [new("long_context", 95, 1_182), new("cron", 41, 1)],
+            [], [new("ernie-mode", 5), new("superpowers:test-driven-development", 2)], [new("superpowers", 3)], []);
+        var week = new BehaviorWindow(9_360, 15,
+            [new("long_context", 94, 7_879), new("subagent_heavy", 62, 4), new("cache_miss", 18, 640)],
+            [new("general-purpose", 11), new("Explore", 3)], [new("ernie-mode", 1)], [new("superpowers", 1)], [new("rea", 1)]);
+        return Task.FromResult<UsageBehaviors?>(new UsageBehaviors(DateTimeOffset.UtcNow, day, week));
+    }
+
     public void Seed(HistoryStore history)
     {
         var rows = new List<UsageSample>();
