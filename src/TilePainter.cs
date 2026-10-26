@@ -13,6 +13,26 @@ internal sealed record TileModel(string Title, TileIcon Icon, double Remaining, 
 /// <summary>The one-sentence conclusion under the tiles.</summary>
 internal sealed record Insight(string Text, Level Level, InsightIcon Icon);
 
+/// <summary>Each quota's own hover light, so the three blocks never glow alike.</summary>
+internal sealed record GlowStyle(Color Color, int Comets, float Tail, float LapMs)
+{
+    /// <summary>5-hour: electric cyan, two quick comets.</summary>
+    public static readonly GlowStyle Session = new(Color.FromArgb(0x5E, 0xEA, 0xF4), 2, 0.30f, 1500);
+
+    /// <summary>Weekly: one long golden stream.</summary>
+    public static readonly GlowStyle Weekly = new(Color.FromArgb(0xFF, 0xC9, 0x4D), 1, 0.48f, 2200);
+
+    /// <summary>Per-model windows: three short pink-violet starlights.</summary>
+    public static readonly GlowStyle Model = new(Color.FromArgb(0xF4, 0x8F, 0xD8), 3, 0.18f, 2600);
+
+    public static GlowStyle For(string windowId) => windowId switch
+    {
+        WindowIds.FiveHour => Session,
+        WindowIds.SevenDay => Weekly,
+        _ => Model,
+    };
+}
+
 /// <summary>
 /// Pixel fonts for one DPI scale, cached so animation frames do not allocate fonts. Sizes are on the
 /// generous side and most labels are bold: JhengHei's regular strokes get thin and blurry when small.
@@ -133,6 +153,115 @@ internal static class TilePainter
         }
         g.Clip = clip;
     }
+
+    /// <summary>
+    /// Hover light: comets of light run around the block's rounded edge over a softly lit rim.
+    /// Each quota has its own light (colour, number of comets, tail length, speed); the tail fades
+    /// from that colour into a white head with a light burst, a sparkle and a few trailing twinkles.
+    /// phase 0..1 is one lap; intensity 0..1 fades the whole effect in and out. With phase &lt; 0
+    /// (animations off) only the lit rim is drawn.
+    /// </summary>
+    public static void EdgeGlow(Graphics g, RectangleF r, float radius, float phase, float scale, GlowStyle style, float intensity = 1)
+    {
+        if (intensity <= 0.01f)
+            return;
+        using var path = Theme.RoundedRect(r, radius);
+        float breathe = phase < 0 ? 1 : 0.75f + 0.25f * MathF.Sin(phase * MathF.PI * 2 * 3);
+        float level = breathe * intensity;
+        var tint = style.Color;
+        // The whole edge glows softly outward in the quota's colour, with a crisp lit rim on top.
+        using (var aura = new Pen(Color.FromArgb((int)(70 * level), tint), 7f * scale))
+            g.DrawPath(aura, path);
+        using (var rim = new Pen(Color.FromArgb((int)(190 * level), Mix(tint, Color.White, 0.55f)), 1.6f * scale))
+            g.DrawPath(rim, path);
+        if (phase < 0)
+            return;
+
+        path.Flatten(null, 0.3f);
+        var points = path.PathPoints;
+        int n = points.Length;
+        if (n < 3)
+            return;
+        var lengths = new float[n + 1];
+        for (int i = 0; i < n; i++)
+        {
+            var a = points[i];
+            var b = points[(i + 1) % n];
+            lengths[i + 1] = lengths[i] + MathF.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+        }
+        float total = lengths[n];
+        PointF At(float distance)
+        {
+            distance = ((distance % total) + total) % total;
+            int i = Array.BinarySearch(lengths, distance);
+            if (i < 0)
+                i = ~i - 1;
+            i = Math.Clamp(i, 0, n - 1);
+            float span = lengths[i + 1] - lengths[i];
+            float t = span <= 0 ? 0 : (distance - lengths[i]) / span;
+            var a = points[i];
+            var b = points[(i + 1) % n];
+            return new PointF(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+        }
+
+        const int Steps = 48;
+        float tail = total * style.Tail;
+        using var halo = new Pen(Color.White, 8f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var core = new Pen(Color.White, 3f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var white = new SolidBrush(Color.FromArgb((int)(255 * intensity), 255, 255, 255));
+        for (int c = 0; c < style.Comets; c++)
+        {
+            float offset = c / (float)style.Comets;
+            float head = ((phase + offset) % 1f) * total;
+            var previous = At(head - tail);
+            for (int k = 1; k <= Steps; k++)
+            {
+                float t = k / (float)Steps;
+                var point = At(head - tail + tail * t);
+                // Coloured and thin at the tail, white and wide at the head: the light reads as moving forward.
+                halo.Color = Color.FromArgb((int)(160 * t * t * level), tint);
+                halo.Width = (2 + 10 * t) * scale;
+                g.DrawLine(halo, previous, point);
+                core.Color = Color.FromArgb((int)(255 * t * level), Mix(tint, Color.White, 0.25f + 0.75f * t * t));
+                core.Width = (1f + 2.4f * t) * scale;
+                g.DrawLine(core, previous, point);
+                previous = point;
+            }
+
+            // A soft burst of coloured light around the head, with a turning sparkle in it.
+            var at = At(head);
+            float twinkle = 0.72f + 0.28f * MathF.Sin((phase * 11 + offset) * MathF.PI * 2);
+            float burst = 14f * scale * twinkle;
+            using (var glowPath = new GraphicsPath())
+            {
+                glowPath.AddEllipse(at.X - burst, at.Y - burst, burst * 2, burst * 2);
+                using var glow = new PathGradientBrush(glowPath)
+                {
+                    CenterColor = Color.FromArgb((int)(220 * level), Mix(tint, Color.White, 0.6f)),
+                    SurroundColors = [Color.FromArgb(0, tint)],
+                };
+                g.FillPath(glow, glowPath);
+            }
+            Glyphs.Sparkle(g, at, 7f * scale * twinkle, white, phase * 360 * 2);
+
+            // Little stars left behind the head, each twinkling on its own beat.
+            for (int j = 1; j <= 4; j++)
+            {
+                float back = head - tail * 0.16f * j;
+                var star = At(back);
+                float beat = 0.5f + 0.5f * MathF.Sin((phase * 14 + j * 0.37f + offset) * MathF.PI * 2);
+                int alpha = (int)(230 * (1 - j / 5f) * beat * intensity);
+                if (alpha < 8)
+                    continue;
+                float wobble = MathF.Sin((phase * 6 + j) * MathF.PI * 2) * 3.5f * scale;
+                using var starBrush = new SolidBrush(Color.FromArgb(alpha, Mix(tint, Color.White, 0.7f)));
+                Glyphs.Sparkle(g, new PointF(star.X + wobble, star.Y - wobble * 0.6f), (3.6f - j * 0.5f) * scale, starBrush, j * 40);
+            }
+        }
+    }
+
+    static Color Mix(Color a, Color b, float t) => Color.FromArgb(
+        (int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
 
     /// <summary>A soft drop shadow under a lifted block (lift 0..1).</summary>
     public static void Shadow(Graphics g, RectangleF r, float radius, float lift, float scale)

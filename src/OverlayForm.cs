@@ -405,7 +405,8 @@ internal sealed class OverlayForm : Form
             float current = lift.GetValueOrDefault(id), target = id == hoverTile ? 1 : 0;
             if (Math.Abs(target - current) > 0.01f)
             {
-                lift[id] = current + (target - current) * 0.22f;
+                // Gentle ease so the lift and its edge light fade in and out over about a quarter second.
+                lift[id] = current + (target - current) * 0.14f;
                 lifting = true;
             }
             else
@@ -416,7 +417,8 @@ internal sealed class OverlayForm : Form
 
         long now = fx.ElapsedMilliseconds;
         effects.RemoveAll(e => now - e.Start > e.Duration);
-        bool effecting = effects.Count > 0 || now - popStart < PopMs;
+        // The edge light keeps running only while the pointer is on a block.
+        bool effecting = effects.Count > 0 || now - popStart < PopMs || hoverTile != null;
 
         Invalidate();
         if (!tweening && !loading && !critical && !fading && !lifting && !effecting)
@@ -612,7 +614,8 @@ internal sealed class OverlayForm : Form
             Location = originStart + delta;
             return;
         }
-        SetHover(tileBounds.FirstOrDefault(t => t.Bounds.Contains(e.Location)).Id);
+        if (!scriptedHover)
+            SetHover(tileBounds.FirstOrDefault(t => t.Bounds.Contains(e.Location)).Id);
         // Pointing at the sparkle makes it twinkle.
         if (animate && !Compact && e.Y < S(Pad + HeaderH) && e.X < S(Pad + 120) && fx.ElapsedMilliseconds - popStart > 1200)
         {
@@ -636,6 +639,20 @@ internal sealed class OverlayForm : Form
         hoverTile = id;
         Kick();
         Invalidate();
+    }
+
+    /// <summary>
+    /// The quota's own edge light. Its strength follows the hover lift, so it fades in when the
+    /// pointer arrives and only fades away after the pointer has left.
+    /// </summary>
+    void PaintHoverLight(Graphics g, RectangleF drawn, string id, string windowId, float radius)
+    {
+        float intensity = animate ? lift.GetValueOrDefault(id) : (hoverTile == id ? 1 : 0);
+        if (intensity <= 0.01f)
+            return;
+        var style = GlowStyle.For(windowId);
+        float phase = animate ? fx.ElapsedMilliseconds % style.LapMs / style.LapMs : -1;
+        TilePainter.EdgeGlow(g, drawn, radius, phase, UiScale, style, intensity);
     }
 
     void OnMouseUp(object? sender, MouseEventArgs e)
@@ -746,6 +763,7 @@ internal sealed class OverlayForm : Form
                 var level = Theme.LevelOf(w.RemainingPercent, service.Settings);
                 var drawn = Lifted(g, r, w.Id, 12 * s, out float l);
                 TilePainter.Mini(g, drawn, w.Label.Replace("本週·", ""), ShownValue(w), level, Theme.Word(level, w.RemainingPercent), f, 0.25f * l, shimmer);
+                PaintHoverLight(g, drawn, w.Id, w.Id, 12 * s);
                 tileBounds.Add((r, w.Id));
             }
         }
@@ -773,6 +791,7 @@ internal sealed class OverlayForm : Form
         var drawn = Lifted(g, r, id, 14 * UiScale, out float l);
         float glow = Math.Max(w == null ? 0 : GlowFor(w), 0.25f * l);
         TilePainter.Tile(g, drawn, model, Fonts, glow, shimmer);
+        PaintHoverLight(g, drawn, id, id, 14 * UiScale);
         tileBounds.Add((r, id));
     }
 
@@ -814,6 +833,7 @@ internal sealed class OverlayForm : Form
         var drawn = Lifted(g, r, "compact", 14 * s, out float l);
         float glow = Math.Max(w == null ? 0 : GlowFor(w), 0.25f * l);
         TilePainter.Tile(g, drawn, model, f, glow, shimmer);
+        PaintHoverLight(g, drawn, "compact", w?.Id ?? WindowIds.SevenDay, 14 * s);
         tileBounds.Add((r, "compact"));
         var dot = new PointF(drawn.Right - 13 * s, drawn.Y + 13 * s);
         float pop = PopProgress;
@@ -939,6 +959,16 @@ internal sealed class OverlayForm : Form
         {
         }
     }
+
+    /// <summary>Points the hover at a block (or none) as if the mouse were there; used by --screenshot.</summary>
+    internal void SimulateHover(string? id)
+    {
+        scriptedHover = true;
+        SetHover(id);
+    }
+
+    /// <summary>Set by --screenshot so a real pointer resting over the window cannot override the scripted hover.</summary>
+    bool scriptedHover;
 
     /// <summary>Plays the "quota used", "reset confetti" and hover effects at once; used by --screenshot.</summary>
     internal void PlayDemoEffects()

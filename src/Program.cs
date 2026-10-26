@@ -129,6 +129,23 @@ internal static class Program
             Grab(overlay, Path.Combine(folder, "overlay-anim-1.png"), settleMs: 120);
             Grab(overlay, Path.Combine(folder, "overlay-anim-2.png"), settleMs: 180);
             Grab(overlay, Path.Combine(folder, "overlay-settled.png"), settleMs: 1200);
+            foreach (var (id, name) in new[] { (WindowIds.FiveHour, "session"), (WindowIds.SevenDay, "weekly"), ("model:fable", "model") })
+            {
+                overlay.SimulateHover(id);
+                Grab(overlay, Path.Combine(folder, $"overlay-hover-{name}-1.png"), settleMs: 450);
+                Grab(overlay, Path.Combine(folder, $"overlay-hover-{name}-2.png"), settleMs: 400);
+            }
+            // Frame cost with the heaviest light (three comets) on: must stay well under 16 ms for 60 fps.
+            using (var frame = new Bitmap(overlay.Width, overlay.Height))
+            {
+                var timer = Stopwatch.StartNew();
+                for (int i = 0; i < 120; i++)
+                    overlay.DrawToBitmap(frame, new Rectangle(Point.Empty, overlay.Size));
+                File.WriteAllText(Path.Combine(folder, "paint-timing.txt"), $"hover frame: {timer.Elapsed.TotalMilliseconds / 120:0.00} ms\n");
+            }
+            overlay.SimulateHover(null);
+            Grab(overlay, Path.Combine(folder, "overlay-unhover-fading.png"), settleMs: 90);
+            Grab(overlay, Path.Combine(folder, "overlay-unhover.png"), settleMs: 700);
             overlay.PlayDemoEffects();
             Grab(overlay, Path.Combine(folder, "overlay-effects.png"), settleMs: 380);
         }
