@@ -82,6 +82,7 @@ internal sealed class OverlayForm : Form
         Item("使用紀錄…", () => HistoryForm.Open(service));
         Item("額度詳情…", () => DetailsForm.Open(service));
         Item("用量分析…", () => AnalysisForm.Open(service));
+        Item("Claude 工作流…", () => WorkflowMiniForm.Open(service, this));
         Item("設定…", () =>
         {
             if (SettingsForm.Edit(service, this))
@@ -120,6 +121,19 @@ internal sealed class OverlayForm : Form
 
         service.Changed += OnServiceChanged;
         service.Alert += OnAlert;
+        Action onWorkflow = () =>
+        {
+            if (!IsHandleCreated || IsDisposed)
+                return;
+            BeginInvoke(() =>
+            {
+                Invalidate();
+                // Claude waits for an answer: the small window comes back, without taking the keyboard.
+                if (service.Workflows.NeedsAnswer)
+                    WorkflowMiniForm.Reveal(service, this);
+            });
+        };
+        service.Workflows.Changed += onWorkflow;
         ticker.Tick += (_, _) =>
         {
             ticker.Interval = Format.UntilNextMinute(DateTimeOffset.Now);
@@ -146,11 +160,24 @@ internal sealed class OverlayForm : Form
         };
         HandleCreated += (_, _) => Theme.ApplyWindowChrome(this, rounded: true);
         DpiChanged += (_, _) => ApplySize();
-        FormClosing += (_, _) => SavePosition();
+        FormClosing += (_, e) =>
+        {
+            // Leaving stops the conversations in the workflow window; ask first while Claude is working.
+            int running = service.Workflows.Running;
+            if (e.CloseReason == CloseReason.UserClosing && running > 0
+                && MessageBox.Show($"Claude 工作流還有 {running} 個工作在進行，離開會停止它們。\n確定要離開嗎？", "Claude 額度",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                e.Cancel = true;
+                return;
+            }
+            SavePosition();
+        };
         FormClosed += (_, _) =>
         {
             service.Changed -= OnServiceChanged;
             service.Alert -= OnAlert;
+            service.Workflows.Changed -= onWorkflow;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
             SystemEvents.SessionSwitch -= OnSessionSwitch;
@@ -199,6 +226,11 @@ internal sealed class OverlayForm : Form
     Rectangle ModeToggleBounds => Compact
         ? new Rectangle(Width - S(30), Height - S(28), S(22), S(20))
         : new Rectangle(Width - S(Pad + 22), S(Pad + 3), S(22), S(20));
+
+    /// <summary>The ">_" button that opens the workflow window, left of the mode toggle.</summary>
+    Rectangle WorkflowBounds => Compact
+        ? new Rectangle(Width - S(58), Height - S(28), S(24), S(20))
+        : new Rectangle(Width - S(Pad + 50), S(Pad + 3), S(24), S(20));
 
     public void ApplySettings()
     {
@@ -594,6 +626,11 @@ internal sealed class OverlayForm : Form
             ToggleMode();
             return;
         }
+        if (WorkflowBounds.Contains(e.Location))
+        {
+            WorkflowMiniForm.Toggle(service, this);
+            return;
+        }
         foreach (var (bounds, _) in tileBounds)
         {
             if (animate && bounds.Contains(e.Location))
@@ -630,6 +667,8 @@ internal sealed class OverlayForm : Form
         }
         string text = ModeToggleBounds.Contains(e.Location)
             ? (Compact ? "切換為標準模式" : "切換為精簡模式")
+            : WorkflowBounds.Contains(e.Location)
+            ? "Claude 工作流：不用開 VS Code 就能下指令" + (service.Workflows.Running is int n and > 0 ? $"（{n} 個工作進行中）" : "")
             : TooltipText();
         if (text != lastTip)
         {
@@ -716,6 +755,7 @@ internal sealed class OverlayForm : Form
         else
             PaintStandard(g, now);
         PaintModeToggle(g);
+        PaintWorkflowButton(g);
         PaintEffects(g);
     }
 
@@ -739,7 +779,7 @@ internal sealed class OverlayForm : Form
 
         string meta = snapshot == null ? "" : $"{snapshot.PlanLabel} · {snapshot.ObservedAt.ToLocalTime():HH:mm} 更新";
         var metaSize = g.MeasureString(meta, f.Small);
-        float metaX = ModeToggleBounds.Left - 8 * s - metaSize.Width;
+        float metaX = WorkflowBounds.Left - 6 * s - metaSize.Width;
         using (var metaBrush = new SolidBrush(Color.FromArgb(0xC9, 0xC5, 0xE0)))
             g.DrawString(meta, f.Small, metaBrush, new PointF(metaX, headerY + 6 * s));
         var dot = new PointF(metaX - 10 * s, headerY + 14 * s);
@@ -900,6 +940,41 @@ internal sealed class OverlayForm : Form
         g.FillEllipse(brush, c.X - radius, c.Y - radius, radius * 2, radius * 2);
         using var edge = new Pen(Color.FromArgb(120, 255, 255, 255), 1);
         g.DrawEllipse(edge, c.X - radius, c.Y - radius, radius * 2, radius * 2);
+    }
+
+    /// <summary>
+    /// The ">_" workflow button: a quiet outline at rest; while Claude works it fills in violet with the
+    /// number of jobs, and turns amber when Claude waits for an answer.
+    /// </summary>
+    void PaintWorkflowButton(Graphics g)
+    {
+        var r = (RectangleF)WorkflowBounds;
+        float s = UiScale;
+        int running = service.Workflows.Running;
+        bool asking = service.Workflows.NeedsAnswer;
+        var ink = Compact ? Color.White : Theme.Muted;
+        if (running > 0)
+        {
+            using var fill = new SolidBrush(asking ? Theme.Alpha(Theme.Warning, 220) : Theme.Alpha(Theme.Violet, 200));
+            using var path = Theme.RoundedRect(r, 6 * s);
+            g.FillPath(fill, path);
+            ink = asking ? Color.FromArgb(0x3A, 0x2C, 0x14) : Color.White;
+        }
+        using (var pen = new Pen(ink, Math.Max(1.4f, 1.6f * s)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+        {
+            float cx = r.X + r.Width * 0.3f, cy = r.Y + r.Height / 2;
+            g.DrawLines(pen, [new PointF(cx - 3 * s, cy - 4 * s), new PointF(cx + 1.5f * s, cy), new PointF(cx - 3 * s, cy + 4 * s)]);
+            g.DrawLine(pen, cx + 4 * s, cy + 4.5f * s, cx + 10 * s, cy + 4.5f * s);
+        }
+        if (running > 1)
+        {
+            var badge = new RectangleF(r.Right - 7 * s, r.Y - 5 * s, 12 * s, 12 * s);
+            using var brush = new SolidBrush(Theme.Coral);
+            g.FillEllipse(brush, badge);
+            using var font = new Font(Theme.UiFamily, 7f * s, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var center = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            g.DrawString(running > 9 ? "9+" : running.ToString(), font, Brushes.White, badge, center);
+        }
     }
 
     void PaintModeToggle(Graphics g)

@@ -32,6 +32,7 @@ internal sealed class MonitorService : IDisposable
         Settings = AtomicJson.Load(SettingsPath, () => new Settings());
         Settings.Normalize();
         SaveSettings();
+        Workflows = new WorkflowHub(() => Settings.ClaudePath);
         plannedInterval = Settings.IntervalSeconds;
         History = new HistoryStore(root);
         log = new AppLog(root);
@@ -101,6 +102,9 @@ internal sealed class MonitorService : IDisposable
     public string Root { get; }
     public bool Demo { get; }
     public Settings Settings { get; }
+
+    /// <summary>Conversations started from the workflow window.</summary>
+    public WorkflowHub Workflows { get; }
     public HistoryStore History { get; }
     public UsageSnapshot? Current { get; private set; }
     public IReadOnlyDictionary<string, Forecast> Forecasts { get; private set; } = new Dictionary<string, Forecast>();
@@ -394,6 +398,7 @@ internal sealed class MonitorService : IDisposable
 
     public void Dispose()
     {
+        Workflows.Dispose();
         activity?.Dispose();
         stop.Cancel();
         try

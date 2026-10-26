@@ -12,8 +12,8 @@
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationVisualStyles>true</ApplicationVisualStyles>
-    <Version>0.4.1</Version>
-    <FileVersion>0.4.1.0</FileVersion>
+    <Version>0.5.0</Version>
+    <FileVersion>0.5.0.0</FileVersion>
     <Product>ClaudeUsageMonitor</Product>
     <Description>Claude 額度小幫手（非官方）</Description>
     <Copyright>Copyright (c) 2026 ernie0</Copyright>

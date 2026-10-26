@@ -27,7 +27,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
 
         if (args.Contains("--screenshot"))
-            return Screenshots(Arg("--screenshot") ?? Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-screens"));
+            return Screenshots(Arg("--screenshot") ?? Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-screens"), args.Contains("--workflow-live"));
 
         string instance = demo ? "ClaudeUsageMonitor-demo" : "ClaudeUsageMonitor";
         using var mutex = new Mutex(true, @"Local\" + instance, out bool first);
@@ -61,7 +61,7 @@ internal static class Program
         return 0;
     }
 
-    static int Screenshots(string folder)
+    static int Screenshots(string folder, bool live)
     {
         Directory.CreateDirectory(folder);
         screenshotFolder = folder;
@@ -181,7 +181,68 @@ internal static class Program
         motion.Time = null;
         analysis.Close();
         Capture(new SettingsForm(service), Path.Combine(folder, "settings.png"));
+        Workflow(service, folder, live);
         return 0;
+    }
+
+    /// <summary>
+    /// The small workflow window ready to send, and the full view. With --workflow-live it also runs one real
+    /// conversation (small model, no user settings, no saved history) in a scratch folder: allow a write,
+    /// reply, deny an edit, close.
+    /// </summary>
+    static void Workflow(MonitorService service, string folder, bool live)
+    {
+        string work = Path.Combine(folder, "workflow-work");
+        Directory.CreateDirectory(work);
+        var mini = WorkflowMiniForm.Open(service);
+        mini.Location = new Point(60, 60);
+        mini.Prepare(work, "在這個資料夾建立 hello.txt，內容寫「你好」，完成後用一句話回報。");
+        Grab(mini, Path.Combine(folder, "workflow-mini.png"));
+        ClaudeSession? session = null;
+        if (live)
+        {
+            ClaudeSession.ExtraArguments = ["--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--model", "haiku"];
+            session = mini.Submit()!;
+            string log = Path.Combine(folder, "workflow-live.txt");
+            bool Wait(Func<bool> done, string step)
+            {
+                var clock = Stopwatch.StartNew();
+                while (!done() && clock.Elapsed < TimeSpan.FromSeconds(120))
+                    Pump(100);
+                File.AppendAllText(log, $"{step}: {(done() ? "ok" : "timeout")} after {clock.Elapsed.TotalSeconds:0.0} s, state {session.State}\n");
+                return done();
+            }
+            Grab(mini, Path.Combine(folder, "workflow-mini-working.png"), settleMs: 400);
+            if (Wait(() => session.State == JobState.NeedsPermission, "ask to write"))
+            {
+                Grab(mini, Path.Combine(folder, "workflow-mini-ask.png"), settleMs: 300);
+                mini.Act("allow:0");
+            }
+            Wait(() => session.State == JobState.Waiting, "reply after allow");
+            File.AppendAllText(log, $"hello.txt: {(File.Exists(Path.Combine(work, "hello.txt")) ? File.ReadAllText(Path.Combine(work, "hello.txt")) : "missing")}\n");
+            Grab(mini, Path.Combine(folder, "workflow-mini-done.png"), settleMs: 300);
+            mini.Act("reply:0");
+            mini.Prepare(work, "把 hello.txt 的內容改成「哈囉」。");
+            Grab(mini, Path.Combine(folder, "workflow-mini-reply.png"), settleMs: 200);
+            mini.Submit();
+            if (Wait(() => session.State == JobState.NeedsPermission, "ask to edit"))
+                mini.Act("deny:0");
+            Wait(() => session.State == JobState.Waiting, "reply after deny");
+            File.AppendAllText(log, $"hello.txt after deny: {File.ReadAllText(Path.Combine(work, "hello.txt"))}\n");
+            Grab(mini, Path.Combine(folder, "workflow-mini-deny.png"), settleMs: 300);
+        }
+        var full = WorkflowForm.Open(service);
+        full.StartPosition = FormStartPosition.Manual;
+        full.Location = new Point(520, 40);
+        Grab(full, Path.Combine(folder, live ? "workflow-detail.png" : "workflow.png"));
+        full.Dispose();
+        if (session != null)
+        {
+            mini.Act("close:0");
+            Pump(400);
+            Grab(mini, Path.Combine(folder, "workflow-mini-closed.png"), settleMs: 200);
+        }
+        mini.Dispose();
     }
 
     static string screenshotFolder = "";

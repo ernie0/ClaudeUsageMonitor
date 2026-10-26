@@ -49,6 +49,12 @@ internal sealed class Settings
     public bool StartHidden { get; set; }
     public int RetentionDays { get; set; } = 90;
     public string ClaudePath { get; set; } = "";
+    /// <summary>The folder the workflow window last started a conversation in.</summary>
+    public string WorkflowFolder { get; set; } = "";
+    /// <summary>The permission mode the workflow window starts conversations in.</summary>
+    public string WorkflowMode { get; set; } = PermissionModes.Ask;
+    public int? WorkflowX { get; set; }
+    public int? WorkflowY { get; set; }
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
     public string Salt { get; set; } = "";
@@ -61,6 +67,8 @@ internal sealed class Settings
         OpacityPercent = Math.Clamp(OpacityPercent, 40, 100);
         RetentionDays = Math.Clamp(RetentionDays, 7, 365);
         ClaudePath ??= "";
+        WorkflowFolder ??= "";
+        WorkflowMode = PermissionModes.Of(WorkflowMode ?? "").Id;
         if (string.IsNullOrEmpty(Salt))
             Salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
     }

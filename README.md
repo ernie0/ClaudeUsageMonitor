@@ -2,7 +2,7 @@
 
 在 Windows 或 Mac 桌面放一個小浮窗，隨時看 **Claude 訂閱方案的 5 小時額度、每週額度、各模型每週額度還剩多少、什麼時候重置、照目前速度會不會在重置前用完**。工具開著時會累積使用曲線，可匯出 CSV。
 
-這是**非官方工具**，不是 Anthropic 的產品，也未受其背書。不會幫你增加額度，也不會替你送出任何提問。設計參考 [hayabusasean/CodexUsageMonitor](https://github.com/hayabusasean/CodexUsageMonitor)（MIT），是它的 Claude 版本。
+這是**非官方工具**，不是 Anthropic 的產品，也未受其背書。不會幫你增加額度；查額度本身不會送出任何提問，只有你在「Claude 工作流」小視窗輸入的指令才會交給 Claude Code 執行（會用到額度）。設計參考 [hayabusasean/CodexUsageMonitor](https://github.com/hayabusasean/CodexUsageMonitor)（MIT），是它的 Claude 版本。
 
 ## 適合誰
 
@@ -53,12 +53,41 @@
 
 ![設定](docs/screenshots/settings.png)
 
+## Claude 工作流（不用開 VS Code 就能下指令）
+
+和精簡浮窗一樣小的視窗：打一行字，Claude Code 就在你選的資料夾裡做事。只有進行中的工作會列出來；Claude 要改檔或執行指令時，小視窗會自己跳出來問你。目前只有 Windows 版。
+
+![Claude 想要建立檔案，等你允許](docs/screenshots/workflow-ask.png)
+
+![完成後可以接著回覆](docs/screenshots/workflow-done.png)
+
+| 項目 | 說明 |
+| --- | --- |
+| 開啟 | 浮窗右上角的「>_」按鈕，或右鍵選單「Claude 工作流…」。再按一次「>_」收起；Esc 也會收起。 |
+| 下指令 | 在輸入列打字，Enter 送出。下方可選資料夾（最近用過 Claude Code 的專案，或「其他資料夾…」）與權限模式。 |
+| 工作列 | 每個工作一列：狀態（工作中／等你允許／等你回覆／已中斷）、標題、最新一步或回覆的開頭。按鈕只出現當下用得到的：允許／拒絕、停止、回覆、關閉。 |
+| 接著問 | 按「回覆」後輸入列會標示「回覆」，Enter 就接著同一段對話說；Esc 取消。 |
+| 詳細 | 「詳細」或點工作列，開大視窗看完整對話、Claude 要執行的完整指令或檔案路徑。 |
+| 收起與離開 | 關掉或收起視窗，工作會繼續；離開本工具會停止進行中的工作（會先問你）。 |
+
+權限模式（每次送出前可選，會記住上次的選擇；不會改到你 Claude Code 本身的設定）：
+
+| 模式 | 說明 |
+| --- | --- |
+| 每次詢問（預設） | 改檔或執行指令前都先問你 |
+| 自動允許改檔 | 改檔不問，執行指令仍會問 |
+| 自動判斷 | Claude Code 判斷安全的動作自動放行，有風險的才問 |
+| 只規劃 | 只讀檔、提出計畫，不改檔也不執行指令 |
+| 全部允許 | 不問就改檔、執行任何指令（有風險，選擇時會再確認一次） |
+
+工作和你在 VS Code 裡開的 Claude Code 一樣：會套用你的設定（CLAUDE.md、hooks、外掛），也會存進 Claude Code 的對話紀錄，之後可在 VS Code 用 `/resume` 接著做。你在 Claude Code 設定裡已允許的動作不會再問。
+
 ## 安裝、更新與移除
 
 | 項目 | 說明 |
 | --- | --- |
-| 版本 | 0.4.1（修正用量分析提示框文字不見與殘影；使用紀錄頁套用相同的動畫與玻璃風格，只畫畫面上看得到的列，滑鼠反應變快）。0.4.0 詳情與用量分析加入進場與懸停動畫、全面玻璃質感、浮窗顯示時間。0.3.0 深色玻璃儀表板、0.2.0 用量分析與 Token、0.1.1 卡片光芒、0.1.0 第一版） |
-| 安裝 | 解壓縮 `ClaudeUsageMonitor-v0.4.1-win-x64.zip` 到固定資料夾（例如 `D:\工具\ClaudeUsageMonitor`），雙擊 `ClaudeUsageMonitor.exe`。可對照同名 `.sha256` 檔核對 SHA-256。 |
+| 版本 | 0.5.0（新增 Claude 工作流小視窗：不開 VS Code 就能下指令、可選權限模式、Claude 要動手前先問你）。0.4.1（修正用量分析提示框文字不見與殘影；使用紀錄頁套用相同的動畫與玻璃風格，只畫畫面上看得到的列，滑鼠反應變快）。0.4.0 詳情與用量分析加入進場與懸停動畫、全面玻璃質感、浮窗顯示時間。0.3.0 深色玻璃儀表板、0.2.0 用量分析與 Token、0.1.1 卡片光芒、0.1.0 第一版） |
+| 安裝 | 解壓縮 `ClaudeUsageMonitor-v0.5.0-win-x64.zip` 到固定資料夾（例如 `D:\工具\ClaudeUsageMonitor`），雙擊 `ClaudeUsageMonitor.exe`。可對照同名 `.sha256` 檔核對 SHA-256。 |
 | 開機自動啟動 | 設定 →「登入 Windows 時自動啟動」（寫入目前使用者的啟動項目，不需要系統管理員）。 |
 | 更新 | 先從選單「離開」，用新版 exe 覆蓋舊檔再開啟。設定與紀錄存在 `%LOCALAPPDATA%\ClaudeUsageMonitor`，不在 exe 旁邊，更新不會動到。 |
 | 移除 | 先在設定取消開機自動啟動、從選單「離開」，再刪除程式資料夾；要連紀錄一起刪就刪 `%LOCALAPPDATA%\ClaudeUsageMonitor`。 |
@@ -69,7 +98,7 @@
 
 | 項目 | 說明 |
 | --- | --- |
-| 下載哪一個 | 蘋果選單 →「關於這台 Mac」：晶片寫 Apple M1／M2／M3／M4… 用 `ClaudeUsageMonitor-v0.4.1-macos-arm64.zip`；寫 Intel 用 `…-macos-x64.zip`。可對照 `.sha256` 檔核對。 |
+| 下載哪一個 | 蘋果選單 →「關於這台 Mac」：晶片寫 Apple M1／M2／M3／M4… 用 `ClaudeUsageMonitor-v0.5.0-macos-arm64.zip`；寫 Intel 用 `…-macos-x64.zip`。可對照 `.sha256` 檔核對。 |
 | 安裝 | 連按兩下 zip 解壓縮，把 `ClaudeUsageMonitor.app` 拖到「應用程式」資料夾。 |
 | 第一次開啟 | 這個 App 沒有 Apple 開發者簽署，第一次開會被擋。到「系統設定 → 隱私權與安全性」往下找到 ClaudeUsageMonitor，按「強制打開／仍要打開」，之後就能正常開。也可以在「終端機」貼上 `xattr -dr com.apple.quarantine /Applications/ClaudeUsageMonitor.app` 後再開。 |
 | 開啟後 | 選單列出現彩色數字圖示，浮窗在螢幕右上角。在浮窗按右鍵（或按住 Control 點一下）開選單；點選單列圖示也有同樣的選單。 |
@@ -132,6 +161,7 @@
 - 本工具本身不連網、沒有遙測、不上傳任何資料。連網的是官方 Claude Code（照它平常的方式連到 Anthropic）。
 - 為了在你開始使用時立刻更新，工具會監看 `~/.claude/projects` 資料夾**有沒有檔案變動**。
 - **Token 數**：開啟用量分析、詳情或使用紀錄時，工具會讀這台電腦上 Claude Code 的對話紀錄（`~/.claude/projects/**/*.jsonl`），**只取每次回應的時間、模型與 Token 數字**，不保存、不顯示、不上傳任何對話內容；同一則回應會依編號去重。只含這台電腦，不含其他裝置與 claude.ai 網頁。
+- **Claude 工作流**：你輸入的指令會交給電腦上的 Claude Code 執行（它照平常的方式連到 Anthropic），會用到額度；Claude 讀到的檔案內容也會跟平常一樣送給模型。本工具不保存對話內容，對話由 Claude Code 自己存在它的紀錄裡。「最近的專案」清單只讀每個專案最新一份對話紀錄裡的工作資料夾（`cwd`）欄位。
 - **是什麼在吃額度**：由 Claude Code 自己掃描本機近 7 天的對話紀錄後回報（約 3～10 秒），工具只保存它回報的比例與名稱（`behaviors.json`）。
 - 已知副作用：每次查詢時，Claude Code 會更新它自己 `~/.claude.json` 裡的功能旗標快取時間（`cachedGrowthBookFeaturesAt`），這和平常每次啟動 Claude Code 一樣。
 - CSV 匯出含使用時間，分享前請先檢查。
@@ -141,7 +171,8 @@
 - `get_usage` 是 Claude Code 標示為「實驗性」的介面，日後 Claude Code 改版可能改變格式；改變時工具會顯示「回應無法辨識」而不是顯示錯的數字。
 - 燒速與「何時用完」是觀察推估，不是官方數字；關機、休眠或工具關閉期間不會補資料（圖上以斜線標示「未監測」）。
 - 只支援原生 `claude.exe`（Mac 為原生 `claude`）；如果 Claude Code 是用 npm 安裝的 Node 版本，請在設定指定原生執行檔位置或改用官方安裝程式。
-- Mac 版目前只在 Windows 上用同一份程式驗證過畫面與查詢流程，尚未在 Mac 實機確認；App 本身沒有 Apple 開發者簽署。
+- Mac 版目前只在 Windows 上用同一份程式驗證過畫面與查詢流程，尚未在 Mac 實機確認；App 本身沒有 Apple 開發者簽署。Mac 版還沒有 Claude 工作流。
+- Claude 工作流只會在 Claude Code 自己要詢問的時候問你；「自動判斷」與「全部允許」是否放行由 Claude Code 決定。
 
 ## 給開發者
 
@@ -160,7 +191,7 @@ dotnet build mac\ClaudeUsageMonitor.Mac.csproj    # Mac 版（Avalonia，也能�
 | `--demo` | 用合成資料執行（資料放在暫存資料夾），不需要 Claude 帳號 |
 | `--probe <檔案.json>` | 實際查詢一次額度與「是什麼在吃額度」，把結果寫到檔案後結束（排錯用，不寫入紀錄） |
 | `--probe-tokens <檔案.json> [--days 7]` | 讀本機對話紀錄，輸出區間 Token 數、每天與各模型（排錯用） |
-| `--screenshot <資料夾>` | 用示範資料把每個視窗輸出成 PNG 後結束 |
+| `--screenshot <資料夾>` | 用示範資料把每個視窗輸出成 PNG 後結束；加 `--workflow-live` 會實際跑一段 Claude 工作流（Haiku、不載入你的設定、不留紀錄，在截圖資料夾裡建一個測試檔，會用到少量額度） |
 | 環境變數 `CLAUDE_USAGE_MONITOR_HOME` | 改變資料資料夾位置（測試用） |
 
 程式結構：`ClaudeUsageClient`（啟動 claude.exe、控制請求）→ `UsageParser`（解析）→ `MonitorService`（排程、紀錄、提醒）→ `OverlayForm`／`HistoryForm`／`DetailsForm`／`SettingsForm`（畫面）。`tools\make_icon.py` 產生程式圖示。

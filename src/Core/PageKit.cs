@@ -2,7 +2,7 @@ using System.Drawing;
 
 namespace ClaudeUsageMonitor;
 
-internal enum IconKind { Clock, Calendar, Chip, Refresh, List, Document, External, Chart, Check, Clipboard, Download, Monitor, Search, ChevronRight, ChevronDown, Info, Sparkle, Sun, Folder }
+internal enum IconKind { Clock, Calendar, Chip, Refresh, List, Document, External, Chart, Check, Clipboard, Download, Monitor, Search, ChevronRight, ChevronDown, Info, Sparkle, Sun, Folder, Prompt }
 
 /// <summary>A clickable area the page drew, and what clicking it means.</summary>
 internal sealed record Hit(RectangleF Bounds, string Action);
@@ -506,6 +506,11 @@ internal static class PageKit
             case IconKind.Folder:
                 p.Polygon([P(0.06f, 0.24f), P(0.4f, 0.24f), P(0.5f, 0.36f), P(0.94f, 0.36f), P(0.94f, 0.86f), P(0.06f, 0.86f)], WithAlpha(c, 60));
                 p.Polyline([P(0.06f, 0.24f), P(0.4f, 0.24f), P(0.5f, 0.36f), P(0.94f, 0.36f), P(0.94f, 0.86f), P(0.06f, 0.86f), P(0.06f, 0.24f)], c, w);
+                break;
+            case IconKind.Prompt:
+                // ">_": a command line.
+                p.Polyline([P(0.12f, 0.24f), P(0.44f, 0.5f), P(0.12f, 0.76f)], c, w);
+                L(0.52f, 0.8f, 0.9f, 0.8f);
                 break;
             case IconKind.Sparkle:
                 p.Polygon(Star(center, s * 0.5f, s * 0.13f, 4), c);

@@ -215,8 +215,8 @@ internal sealed class PillButton : Button
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        // The background is the parent's own painting (transparent back colour), so the corners match glass panels too.
         var g = e.Graphics;
-        g.Clear(Parent?.BackColor ?? Theme.Canvas);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
         using var path = Theme.RoundedRect(r, r.Height / 2);
