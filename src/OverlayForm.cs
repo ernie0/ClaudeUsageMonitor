@@ -760,16 +760,16 @@ internal sealed class OverlayForm : Form
             {
                 var w = scoped[i];
                 var r = new RectangleF(x, tilesY + i * (h + Gap * s), ScopedW * s, h);
-                var level = Theme.LevelOf(w.RemainingPercent, service.Settings);
+                var level = Levels.Of(w.RemainingPercent, service.Settings);
                 var drawn = Lifted(g, r, w.Id, 12 * s, out float l);
-                TilePainter.Mini(g, drawn, w.Label.Replace("本週·", ""), ShownValue(w), level, Theme.Word(level, w.RemainingPercent), f, 0.25f * l, shimmer);
+                TilePainter.Mini(g, drawn, w.Label.Replace("本週·", ""), ShownValue(w), level, Levels.Word(level, w.RemainingPercent), f, 0.25f * l, shimmer);
                 PaintHoverLight(g, drawn, w.Id, w.Id, 12 * s);
                 tileBounds.Add((r, w.Id));
             }
         }
 
         var pill = new RectangleF(Pad * s, tilesY + (TileH + Gap) * s, Width - Pad * 2 * s, PillH * s);
-        TilePainter.Pill(g, pill, TilePainter.BuildInsight(service, now), f);
+        TilePainter.Pill(g, pill, Insights.Build(service, now), f);
     }
 
     void PaintMainTile(Graphics g, RectangleF r, QuotaWindow? w, string id, DateTimeOffset now)
@@ -784,9 +784,9 @@ internal sealed class OverlayForm : Form
         }
         else
         {
-            var level = Theme.LevelOf(w.RemainingPercent, service.Settings);
-            model = new TileModel(TilePainter.TileTitle(w), TilePainter.IconFor(w), ShownValue(w), level,
-                Theme.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), TilePainter.RateText(service, w));
+            var level = Levels.Of(w.RemainingPercent, service.Settings);
+            model = new TileModel(Insights.Title(w), Insights.Icon(w), ShownValue(w), level,
+                Levels.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), Insights.RateText(service, w));
         }
         var drawn = Lifted(g, r, id, 14 * UiScale, out float l);
         float glow = Math.Max(w == null ? 0 : GlowFor(w), 0.25f * l);
@@ -818,17 +818,17 @@ internal sealed class OverlayForm : Form
         TileModel model;
         if (snapshot == null || w == null)
         {
-            var insight = TilePainter.BuildInsight(service, now);
+            var insight = Insights.Build(service, now);
             model = new TileModel("Claude 額度", TileIcon.Calendar, 0, insight.Level == Level.Critical ? Level.Critical : Level.Unknown,
                 insight.Level == Level.Critical ? "錯誤" : "讀取中", insight.Level == Level.Critical ? "查詢失敗" : "正在取得…", "");
         }
         else
         {
-            var level = Theme.LevelOf(w.RemainingPercent, service.Settings);
+            var level = Levels.Of(w.RemainingPercent, service.Settings);
             var other = w.Id == WindowIds.FiveHour ? snapshot.Weekly : snapshot.Session;
-            string second = other == null ? TilePainter.RateText(service, w) : $"{TilePainter.TileTitle(other)} {Format.Percent(other.RemainingPercent)}";
-            model = new TileModel(TilePainter.TileTitle(w), TilePainter.IconFor(w), ShownValue(w), level,
-                Theme.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), second);
+            string second = other == null ? Insights.RateText(service, w) : $"{Insights.Title(other)} {Format.Percent(other.RemainingPercent)}";
+            model = new TileModel(Insights.Title(w), Insights.Icon(w), ShownValue(w), level,
+                Levels.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), second);
         }
         var drawn = Lifted(g, r, "compact", 14 * s, out float l);
         float glow = Math.Max(w == null ? 0 : GlowFor(w), 0.25f * l);
@@ -884,7 +884,7 @@ internal sealed class OverlayForm : Form
         {
             string reset = w.ResetsAt is { } r ? Format.ResetAt(r, now) + " 重置" : "重置時間未提供";
             string rate = service.Forecasts.GetValueOrDefault(w.Id)?.RatePerHour is { } rph ? $" · 燒速 {Format.Rate(rph)}" : "";
-            lines.Add($"{TilePainter.TileTitle(w)}：剩 {Format.Percent(w.RemainingPercent)}（已用 {w.UsedPercent:0}%）· {reset}{rate}");
+            lines.Add($"{Insights.Title(w)}：剩 {Format.Percent(w.RemainingPercent)}（已用 {w.UsedPercent:0}%）· {reset}{rate}");
         }
         lines.Add(service.Status);
         lines.Add("右鍵開選單 · 雙擊看詳情 · 可拖曳");
@@ -898,7 +898,7 @@ internal sealed class OverlayForm : Form
         var snapshot = service.Current;
         var window = snapshot?.Tightest;
         string value = window == null ? "?" : Math.Floor(window.RemainingPercent).ToString("0");
-        var level = window == null || !service.Fresh ? Level.Unknown : Theme.LevelOf(window.RemainingPercent, service.Settings);
+        var level = window == null || !service.Fresh ? Level.Unknown : Levels.Of(window.RemainingPercent, service.Settings);
 
         using var bitmap = RenderTrayBitmap(value, level, SystemInformation.SmallIconSize.Width * 2);
         IntPtr handle = bitmap.GetHicon();

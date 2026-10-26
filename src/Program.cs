@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
-using System.Text.Json;
 
 namespace ClaudeUsageMonitor;
 
@@ -21,7 +20,7 @@ internal static class Program
         bool demo = args.Contains("--demo") || args.Contains("--screenshot");
 
         if (args.Contains("--probe"))
-            return Probe(Arg("--probe") ?? Path.Combine(DataRoot(false), "probe.json"), Arg("--claude"));
+            return AppPaths.Probe(Arg("--probe") ?? Path.Combine(AppPaths.DataRoot(false), "probe.json"), Arg("--claude"));
 
         ApplicationConfiguration.Initialize();
 
@@ -37,10 +36,10 @@ internal static class Program
             return 0;
         }
 
-        string root = DataRoot(demo);
+        string root = AppPaths.DataRoot(demo);
         MonitorService? service = null;
         IUsageSource source = demo
-            ? NewDemo(root)
+            ? AppPaths.NewDemo(root)
             : new ClaudeUsageClient(Path.Combine(root, "neutral"), () => service?.Settings.ClaudePath);
         service = new MonitorService(root, source, demo);
         using (service)
@@ -60,58 +59,11 @@ internal static class Program
         return 0;
     }
 
-    static string DataRoot(bool demo)
-    {
-        if (demo)
-            return Path.Combine(Path.GetTempPath(), "ClaudeUsageMonitor-demo");
-        string? custom = Environment.GetEnvironmentVariable("CLAUDE_USAGE_MONITOR_HOME");
-        return !string.IsNullOrWhiteSpace(custom)
-            ? Path.GetFullPath(custom)
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeUsageMonitor");
-    }
-
-    /// <summary>A fresh demo folder with a week of synthetic history.</summary>
-    static DemoSource NewDemo(string root)
-    {
-        if (Directory.Exists(root))
-            Directory.Delete(root, recursive: true);
-        Directory.CreateDirectory(root);
-        var demo = new DemoSource(DateTimeOffset.UtcNow);
-        demo.Seed(new HistoryStore(root));
-        return demo;
-    }
-
-    /// <summary>One real query without touching the history; for troubleshooting and verification.</summary>
-    static int Probe(string output, string? claudePath)
-    {
-        string root = DataRoot(false);
-        var settings = AtomicJson.Load(Path.Combine(root, "settings.json"), () => new Settings());
-        settings.Normalize();
-        var client = new ClaudeUsageClient(Path.Combine(root, "neutral"), () => claudePath ?? settings.ClaudePath);
-        object result;
-        int code;
-        var started = DateTimeOffset.UtcNow;
-        try
-        {
-            var snapshot = client.ReadAsync(settings.Salt, CancellationToken.None).GetAwaiter().GetResult();
-            result = new { ok = true, seconds = (DateTimeOffset.UtcNow - started).TotalSeconds, claude = client.ExecutablePath, snapshot };
-            code = 0;
-        }
-        catch (MonitorException e)
-        {
-            result = new { ok = false, seconds = (DateTimeOffset.UtcNow - started).TotalSeconds, claude = client.ExecutablePath, error_code = e.Code, message = MonitorService.Explain(e.Code) };
-            code = 2;
-        }
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-        File.WriteAllText(output, JsonSerializer.Serialize(result, AtomicJson.Options));
-        return code;
-    }
-
     static int Screenshots(string folder)
     {
         Directory.CreateDirectory(folder);
-        string root = DataRoot(true);
-        var demo = NewDemo(root);
+        string root = AppPaths.DataRoot(true);
+        var demo = AppPaths.NewDemo(root);
         using var service = new MonitorService(root, demo, demo: true);
         service.PollOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
 
@@ -151,7 +103,7 @@ internal static class Program
         }
         foreach (var (name, value, remaining) in new[] { ("full", "100", 100.0), ("ok", "40", 40.0), ("warn", "13", 13.0), ("critical", "3", 3.0), ("unknown", "?", -1.0) })
         {
-            var level = remaining < 0 ? Level.Unknown : Theme.LevelOf(remaining, service.Settings);
+            var level = remaining < 0 ? Level.Unknown : Levels.Of(remaining, service.Settings);
             using var icon = OverlayForm.RenderTrayBitmap(value, level, 32);
             icon.Save(Path.Combine(folder, $"tray-{name}.png"), ImageFormat.Png);
         }

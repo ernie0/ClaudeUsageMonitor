@@ -45,7 +45,7 @@ internal sealed class SettingsForm : Form
         topMost.Checked = s.TopMost;
         opacity.Value = s.OpacityPercent;
         startHidden.Checked = s.StartHidden;
-        startWithWindows.Checked = Settings.StartWithWindows;
+        startWithWindows.Checked = Autostart.Enabled;
         startWithWindows.Enabled = !service.Demo;
         retention.Value = s.RetentionDays;
         claudePath.Text = s.ClaudePath;
@@ -143,11 +143,11 @@ internal sealed class SettingsForm : Form
             MessageBox.Show(this, "設定沒有存成功，請稍後再試。", "設定", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (!service.Demo && startWithWindows.Checked != Settings.StartWithWindows)
+        if (!service.Demo && startWithWindows.Checked != Autostart.Enabled)
         {
             try
             {
-                Settings.StartWithWindows = startWithWindows.Checked;
+                Autostart.Enabled = startWithWindows.Checked;
             }
             catch (Exception e) when (e is UnauthorizedAccessException or System.Security.SecurityException)
             {

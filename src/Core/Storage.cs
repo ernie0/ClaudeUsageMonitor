@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Win32;
 
 namespace ClaudeUsageMonitor;
 
@@ -64,26 +63,6 @@ internal sealed class Settings
         ClaudePath ??= "";
         if (string.IsNullOrEmpty(Salt))
             Salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-    }
-
-    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    const string RunValue = "ClaudeUsageMonitor";
-
-    public static bool StartWithWindows
-    {
-        get
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-            return key?.GetValue(RunValue) is string;
-        }
-        set
-        {
-            using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-            if (value)
-                key.SetValue(RunValue, $"\"{Environment.ProcessPath}\"");
-            else
-                key.DeleteValue(RunValue, throwOnMissingValue: false);
-        }
     }
 }
 

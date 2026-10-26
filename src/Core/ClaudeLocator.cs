@@ -11,7 +11,44 @@ internal static class ClaudeLocator
     static readonly object Gate = new();
     static (string Path, long Length, DateTime WriteUtc)? verified;
 
-    public static IEnumerable<string> Candidates(string? configured)
+    /// <summary>A non-blocking note about the signature check (macOS only), shown in the details window.</summary>
+    public static string Warning { get; private set; } = "";
+
+    public static IEnumerable<string> Candidates(string? configured) =>
+        OperatingSystem.IsMacOS() ? MacCandidates(configured) : WindowsCandidates(configured);
+
+    /// <summary>
+    /// Apps started from Finder do not get the shell's PATH, so the usual install places are listed
+    /// explicitly: the native installer, the old local install, Homebrew on Apple Silicon and Intel.
+    /// </summary>
+    static IEnumerable<string> MacCandidates(string? configured)
+    {
+        var list = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configured))
+            list.Add(configured.Trim().Trim('"'));
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        list.Add(Path.Combine(home, ".local", "bin", "claude"));
+        list.Add(Path.Combine(home, ".claude", "local", "claude"));
+        list.Add("/opt/homebrew/bin/claude");
+        list.Add("/usr/local/bin/claude");
+
+        string here = AppContext.BaseDirectory.TrimEnd('/');
+        string cwd = Environment.CurrentDirectory.TrimEnd('/');
+        foreach (string raw in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':'))
+        {
+            string dir = raw.Trim();
+            if (!Path.IsPathFullyQualified(dir))
+                continue;
+            string full = Path.GetFullPath(dir).TrimEnd('/');
+            if (full == here || full == cwd)
+                continue;
+            list.Add(Path.Combine(full, "claude"));
+        }
+        // npm installs a Node script, not a native program; only native binaries can be checked and run.
+        return list.Where(File.Exists).Select(Resolve).Where(MacCodeSign.IsMachO).Distinct(StringComparer.Ordinal);
+    }
+
+    static IEnumerable<string> WindowsCandidates(string? configured)
     {
         var list = new List<string>();
         if (!string.IsNullOrWhiteSpace(configured))
@@ -77,8 +114,22 @@ internal static class ClaudeLocator
             if (verified == stamp)
                 return true;
         }
-        if (!Authenticode.IsTrusted(info.FullName) || !SignedBy(info.FullName, Publisher))
+        if (OperatingSystem.IsWindows())
+        {
+            if (!Authenticode.IsTrusted(info.FullName) || !SignedBy(info.FullName, Publisher))
+                return false;
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            var (trusted, warning) = MacCodeSign.Check(info.FullName);
+            if (!trusted)
+                return false;
+            Warning = warning;
+        }
+        else
+        {
             return false;
+        }
         lock (Gate)
             verified = stamp;
         return true;
@@ -86,6 +137,8 @@ internal static class ClaudeLocator
 
     static bool SignedBy(string path, string organization)
     {
+        if (!OperatingSystem.IsWindows())
+            return false;
         try
         {
 #pragma warning disable SYSLIB0057
@@ -121,6 +174,83 @@ internal static class ClaudeLocator
         catch (Exception e) when (e is UnauthorizedAccessException or IOException)
         {
             return [];
+        }
+    }
+}
+
+/// <summary>
+/// macOS check with the system's codesign tool. Strict: an Apple-issued Developer ID certificate whose
+/// team is Anthropic's, with an intact signature. Users report that some Claude Code builds fail the
+/// integrity part on macOS 26, so (by the user's decision) a binary whose signature still names
+/// Anthropic's team is accepted with a visible warning instead of being blocked.
+/// </summary>
+internal static class MacCodeSign
+{
+    /// <summary>Anthropic's Apple developer team, as shown by codesign on Claude Code builds.</summary>
+    public const string AnthropicTeam = "Q6L2SF6YDW";
+
+    const string Codesign = "/usr/bin/codesign";
+
+    public static (bool Trusted, string Warning) Check(string path)
+    {
+        string requirement = $"anchor apple generic and certificate leaf[subject.OU] = \"{AnthropicTeam}\"";
+        if (Run(["--verify", "--strict", "-R=" + requirement, path]).ExitCode == 0)
+            return (true, "");
+
+        var (_, details) = Run(["-dv", "--verbose=2", path]);
+        bool namedAnthropic = details.Split('\n').Any(line => line.Trim() == "TeamIdentifier=" + AnthropicTeam);
+        return namedAnthropic
+            ? (true, "claude 的簽章完整性檢查沒有通過（macOS 26 已知狀況），已依簽章上的 Anthropic 開發者編號確認來源。")
+            : (false, "");
+    }
+
+    /// <summary>Native Mach-O program (thin or universal); npm's Node script is not one.</summary>
+    public static bool IsMachO(string path)
+    {
+        try
+        {
+            using var file = File.OpenRead(path);
+            Span<byte> magic = stackalloc byte[4];
+            if (file.Read(magic) < 4)
+                return false;
+            uint value = BitConverter.ToUInt32(magic);
+            return value is 0xFEEDFACF or 0xFEEDFACE or 0xBEBAFECA or 0xCAFEBABE;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    static (int ExitCode, string Output) Run(string[] arguments)
+    {
+        try
+        {
+            var info = new System.Diagnostics.ProcessStartInfo(Codesign)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            foreach (string argument in arguments)
+                info.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(info);
+            if (process == null)
+                return (-1, "");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000))
+            {
+                process.Kill(entireProcessTree: true);
+                return (-1, "");
+            }
+            // codesign prints its details on stderr.
+            return (process.ExitCode, stdout.Result + "\n" + stderr.Result);
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return (-1, "");
         }
     }
 }

@@ -3,15 +3,8 @@ using System.Drawing.Text;
 
 namespace ClaudeUsageMonitor;
 
-internal enum TileIcon { Clock, Calendar, Chip }
-
-internal enum InsightIcon { Warning, Check, Sparkle }
-
 /// <summary>What one coloured quota block shows. Remaining is the animated value being drawn.</summary>
 internal sealed record TileModel(string Title, TileIcon Icon, double Remaining, Level Level, string Badge, string Countdown, string Rate);
-
-/// <summary>The one-sentence conclusion under the tiles.</summary>
-internal sealed record Insight(string Text, Level Level, InsightIcon Icon);
 
 /// <summary>Each quota's own hover light, so the three blocks never glow alike.</summary>
 internal sealed record GlowStyle(Color Color, int Comets, float Tail, float LapMs)
@@ -405,59 +398,4 @@ internal static class TilePainter
         Text(g, insight.Text, f.Label, Primary, new RectangleF(x, r.Y, r.Right - x - r.Height * 0.4f, r.Height), LeftMiddle, s);
     }
 
-    /// <summary>Turns the service state into the one sentence a user needs.</summary>
-    public static Insight BuildInsight(MonitorService service, DateTimeOffset now)
-    {
-        var snapshot = service.Current;
-        if (snapshot == null)
-            return service.ErrorCode.Length > 0
-                ? new Insight(service.Status, Level.Critical, InsightIcon.Warning)
-                : new Insight("正在向 Claude Code 取得額度…", Level.Unknown, InsightIcon.Sparkle);
-        if (!service.Fresh && service.ErrorCode.Length > 0)
-            return new Insight(service.Status, Level.Low, InsightIcon.Warning);
-
-        var main = new[] { snapshot.Session, snapshot.Weekly }.OfType<QuotaWindow>().ToList();
-        if (main.FirstOrDefault(w => w.RemainingPercent <= 0) is { } empty)
-        {
-            string reset = empty.ResetsAt is { } at ? Format.ResetAt(at, now) + " 重置" : "等待重置";
-            return new Insight($"{TileTitle(empty)}已用完，{reset}", Level.Critical, InsightIcon.Warning);
-        }
-        var risky = main
-            .Select(w => (Window: w, Forecast: service.Forecasts.GetValueOrDefault(w.Id)))
-            .Where(x => x.Forecast is { ExhaustsBeforeReset: true, ExhaustAt: not null })
-            .OrderBy(x => x.Forecast!.ExhaustAt)
-            .FirstOrDefault();
-        if (risky.Window != null)
-            return new Insight($"照目前速度，{TileTitle(risky.Window)} {Format.ResetAt(risky.Forecast!.ExhaustAt!.Value, now)} 用完，早於重置",
-                Level.Low, InsightIcon.Warning);
-        if (main.Any(w => service.Forecasts.GetValueOrDefault(w.Id)?.RatePerHour is not null))
-            return new Insight("照目前速度，額度撐得到重置", Level.Plenty, InsightIcon.Check);
-        return new Insight("正在觀察使用速度，約 15 分鐘後能預估會不會用完", Level.Unknown, InsightIcon.Sparkle);
-    }
-
-    public static string TileTitle(QuotaWindow w) => w.Id switch
-    {
-        WindowIds.FiveHour => "5 小時額度",
-        WindowIds.SevenDay => "本週額度",
-        _ => w.Label.Replace("本週·", "") + " 本週",
-    };
-
-    public static TileIcon IconFor(QuotaWindow w) => w.Id switch
-    {
-        WindowIds.FiveHour => TileIcon.Clock,
-        WindowIds.SevenDay => TileIcon.Calendar,
-        _ => TileIcon.Chip,
-    };
-
-    public static string RateText(MonitorService service, QuotaWindow w)
-    {
-        if (w.RemainingPercent <= 0)
-            return "等待重置";
-        var forecast = service.Forecasts.GetValueOrDefault(w.Id);
-        if (forecast?.RatePerHour is not { } rate)
-            return "速度觀察中…";
-        if (rate < 0.05)
-            return "目前沒有在用";
-        return "每小時 −" + Format.Rate(rate).Replace("%/h", "%");
-    }
 }

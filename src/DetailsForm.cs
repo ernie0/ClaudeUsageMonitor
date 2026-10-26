@@ -227,18 +227,18 @@ internal sealed class QuotaCards : Control
         if (snapshot == null)
         {
             var r = new RectangleF(Margin_ * s, Margin_ * s, Width - Margin_ * 2 * s, RowH * s);
-            TilePainter.Pill(g, r with { Height = 34 * s }, TilePainter.BuildInsight(service, now), fonts);
+            TilePainter.Pill(g, r with { Height = 34 * s }, Insights.Build(service, now), fonts);
             return;
         }
 
         float y = Margin_ * s;
         foreach (var w in snapshot.Windows)
         {
-            var level = Theme.LevelOf(w.RemainingPercent, service.Settings);
+            var level = Levels.Of(w.RemainingPercent, service.Settings);
             var forecast = service.Forecasts.GetValueOrDefault(w.Id) ?? Forecast.Empty;
             var tile = new RectangleF(Margin_ * s, y, TileWidth * s, RowH * s);
-            TilePainter.Tile(g, tile, new TileModel(TilePainter.TileTitle(w), TilePainter.IconFor(w), w.RemainingPercent * progress, level,
-                Theme.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), $"已使用 {w.UsedPercent:0}%"), fonts);
+            TilePainter.Tile(g, tile, new TileModel(Insights.Title(w), Insights.Icon(w), w.RemainingPercent * progress, level,
+                Levels.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), $"已使用 {w.UsedPercent:0}%"), fonts);
 
             var panel = RectangleF.FromLTRB(tile.Right + 10 * s, y, Width - Margin_ * s, y + RowH * s);
             using (var path = Theme.RoundedRect(panel, 14 * s))

@@ -4,9 +4,6 @@ using System.Runtime.InteropServices;
 
 namespace ClaudeUsageMonitor;
 
-/// <summary>How much of a window is left, as a word and a colour anyone can read at a glance.</summary>
-internal enum Level { Plenty, Fair, Low, Critical, Unknown }
-
 internal static class Theme
 {
     // Deep indigo canvas so the coloured quota blocks stand out.
@@ -33,12 +30,6 @@ internal static class Theme
 
     public static Font Ui(float points = 9f, FontStyle style = FontStyle.Regular) => new(UiFamily, points, style);
 
-    public static Level LevelOf(double remaining, Settings settings) =>
-        remaining <= settings.CriticalRemaining ? Level.Critical
-        : remaining <= settings.WarnRemaining ? Level.Low
-        : remaining <= 50 ? Level.Fair
-        : Level.Plenty;
-
     /// <summary>Gradient stops; every pair keeps white text above 5:1 contrast.</summary>
     public static (Color Start, Color End) Gradient(Level level) => level switch
     {
@@ -59,17 +50,7 @@ internal static class Theme
         _ => Muted,
     };
 
-    public static string Word(Level level, double remaining) =>
-        remaining <= 0 ? "用完" : level switch
-        {
-            Level.Plenty => "充足",
-            Level.Fair => "尚可",
-            Level.Low => "偏低",
-            Level.Critical => "告急",
-            _ => "未知",
-        };
-
-    public static Color ForRemaining(double remaining, Settings settings) => Bright(LevelOf(remaining, settings));
+    public static Color ForRemaining(double remaining, Settings settings) => Bright(Levels.Of(remaining, settings));
 
     /// <summary>Follows Windows' "Animation effects" switch (Settings → Accessibility → Visual effects).</summary>
     public static bool AnimationsEnabled
@@ -329,69 +310,4 @@ internal static class Glyphs
             new PointF(r.X + r.Width * 0.45f, r.Y + r.Height * 0.68f),
             new PointF(r.X + r.Width * 0.73f, r.Y + r.Height * 0.36f)]);
     }
-}
-
-internal static class Format
-{
-    static readonly CultureInfo Culture = CultureInfo.InvariantCulture;
-
-    public static string Percent(double value) =>
-        value > 0 && value < 1 ? "<1%" : Math.Floor(value).ToString("0", Culture) + "%";
-
-    public static string Rate(double perHour) =>
-        perHour < 0.05 ? "0%/h" : perHour.ToString(perHour < 10 ? "0.0" : "0", Culture) + "%/h";
-
-    /// <summary>How much observation a rate is based on: "近 2 小時", "近 35 分".</summary>
-    public static string Basis(int minutes) =>
-        minutes >= 60 ? $"近 {minutes / 60.0:0.#} 小時" : $"近 {minutes} 分";
-
-    /// <summary>"2 天 5 小時", "4 小時 56 分", "12 分鐘".</summary>
-    public static string Duration(TimeSpan span)
-    {
-        if (span <= TimeSpan.Zero)
-            return "0 分鐘";
-        if (span.TotalDays >= 1)
-            return $"{(int)span.TotalDays} 天 {span.Hours} 小時";
-        if (span.TotalHours >= 1)
-            return $"{(int)span.TotalHours} 小時 {span.Minutes} 分";
-        return $"{Math.Max(1, (int)Math.Ceiling(span.TotalMinutes))} 分鐘";
-    }
-
-    /// <summary>Tight form for the tiles: "1天12時", "4時28分", "12分".</summary>
-    public static string ShortDuration(TimeSpan span)
-    {
-        if (span <= TimeSpan.Zero)
-            return "0分";
-        if (span.TotalDays >= 1)
-            return $"{(int)span.TotalDays}天{span.Hours}時";
-        if (span.TotalHours >= 1)
-            return $"{(int)span.TotalHours}時{span.Minutes}分";
-        return $"{Math.Max(1, (int)Math.Ceiling(span.TotalMinutes))}分";
-    }
-
-    public static string Countdown(DateTimeOffset? reset, DateTimeOffset now) =>
-        reset is not { } at ? "重置時間未提供"
-        : at <= now ? "已到重置時間，等待更新"
-        : Duration(at - now) + "後重置";
-
-    public static string ShortCountdown(DateTimeOffset? reset, DateTimeOffset now) =>
-        reset is not { } at ? "重置時間未知"
-        : at <= now ? "等待重置"
-        : ShortDuration(at - now) + "後重置";
-
-    /// <summary>"今天 21:00", "明天 09:00", "10/28（三）09:00".</summary>
-    public static string ResetAt(DateTimeOffset reset, DateTimeOffset now)
-    {
-        var local = reset.ToLocalTime();
-        var today = now.ToLocalTime().Date;
-        string time = local.ToString("HH:mm", Culture);
-        if (local.Date == today)
-            return "今天 " + time;
-        if (local.Date == today.AddDays(1))
-            return "明天 " + time;
-        return local.ToString("MM/dd", Culture) + "（" + "日一二三四五六"[(int)local.DayOfWeek] + "）" + time;
-    }
-
-    public static string Money(decimal? amount, string currency) =>
-        amount is { } a ? (currency == "USD" ? "$" + a.ToString("0.00", Culture) : a.ToString("0.00", Culture) + " " + currency) : "—";
 }
