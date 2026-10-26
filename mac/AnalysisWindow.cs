@@ -27,7 +27,7 @@ internal sealed class AnalysisWindow : Window
         Height = 780;
         MinWidth = 820;
         MinHeight = 560;
-        Background = MacTheme.Solid(MacTheme.Canvas);
+        Background = MacTheme.Solid(Color.FromRgb(0x0B, 0x10, 0x22));
         FontFamily = MacTheme.UiFont;
 
         foreach (int range in new[] { 7, 30 })
@@ -137,8 +137,62 @@ internal sealed class AvaloniaPaint(DrawingContext ctx) : IPaint
     public void Fill(SD.RectangleF r, SD.Color color, float radius = 0) =>
         ctx.DrawRectangle(MacTheme.Solid(C(color)), null, R(r), radius, radius);
 
-    public void Gradient(SD.RectangleF r, SD.Color start, SD.Color end, float radius = 0) =>
-        ctx.DrawRectangle(MacTheme.Horizontal(C(start), C(end)), null, R(r), radius, radius);
+    public void Gradient(SD.RectangleF r, SD.Color start, SD.Color end, float radius = 0, bool vertical = false) =>
+        ctx.DrawRectangle(vertical ? MacTheme.Vertical(C(start), C(end)) : MacTheme.Horizontal(C(start), C(end)), null, R(r), radius, radius);
+
+    public IDisposable Clip(SD.RectangleF r, float radius) => ctx.PushClip(new RoundedRect(R(r), radius));
+
+    public void Stroke(SD.RectangleF r, SD.Color color, float width, float radius = 0) =>
+        ctx.DrawRectangle(null, new Pen(MacTheme.Solid(C(color)), width), R(r), radius, radius);
+
+    public void Circle(SD.PointF c, float radius, SD.Color? fill, SD.Color? stroke = null, float strokeWidth = 1) =>
+        ctx.DrawEllipse(fill is { } f ? MacTheme.Solid(C(f)) : null, stroke is { } s ? new Pen(MacTheme.Solid(C(s)), strokeWidth) : null,
+            new Point(c.X, c.Y), radius, radius);
+
+    public void Arc(SD.PointF c, float radius, float startDegrees, float sweepDegrees, SD.Color color, float width)
+    {
+        if (Math.Abs(sweepDegrees) < 0.1f)
+            return;
+        var pen = new Pen(MacTheme.Solid(C(color)), width, lineCap: PenLineCap.Round);
+        if (Math.Abs(sweepDegrees) >= 359.9f)
+            ctx.DrawEllipse(null, pen, new Point(c.X, c.Y), radius, radius);
+        else
+            ctx.DrawGeometry(null, pen, MacDraw.Arc(new Point(c.X, c.Y), radius, startDegrees, sweepDegrees));
+    }
+
+    static StreamGeometry Path(IReadOnlyList<SD.PointF> points, bool closed, float? baseline = null)
+    {
+        var geometry = new StreamGeometry();
+        using var g = geometry.Open();
+        g.BeginFigure(new Point(points[0].X, points[0].Y), closed);
+        for (int i = 1; i < points.Count; i++)
+            g.LineTo(new Point(points[i].X, points[i].Y));
+        if (baseline is { } b)
+        {
+            g.LineTo(new Point(points[^1].X, b));
+            g.LineTo(new Point(points[0].X, b));
+        }
+        g.EndFigure(closed);
+        return geometry;
+    }
+
+    public void Polyline(IReadOnlyList<SD.PointF> points, SD.Color color, float width)
+    {
+        if (points.Count >= 2)
+            ctx.DrawGeometry(null, new Pen(MacTheme.Solid(C(color)), width, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round), Path(points, false));
+    }
+
+    public void Polygon(IReadOnlyList<SD.PointF> points, SD.Color fill)
+    {
+        if (points.Count >= 3)
+            ctx.DrawGeometry(MacTheme.Solid(C(fill)), null, Path(points, true));
+    }
+
+    public void Area(IReadOnlyList<SD.PointF> points, float baseline, SD.Color top, SD.Color bottom)
+    {
+        if (points.Count >= 2)
+            ctx.DrawGeometry(MacTheme.Vertical(C(top), C(bottom)), null, Path(points, true, baseline));
+    }
 
     public void Block(SD.RectangleF r, Level level, float radius)
     {

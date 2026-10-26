@@ -176,7 +176,7 @@ internal sealed class MacShell : IDisposable
         }),
         ("切換標準／精簡模式", () => Overlay.View.ToggleMode()),
         ("-", () => { }),
-        ("使用紀錄…", OpenHistory),
+        ("使用紀錄…", () => OpenHistory()),
         ("額度詳情…", OpenDetails),
         ("用量分析…", OpenAnalysis),
         ("設定…", OpenSettings),
@@ -221,7 +221,12 @@ internal sealed class MacShell : IDisposable
         return menu;
     }
 
-    public void OpenHistory() => Bring(ref history, () => new HistoryWindow(service));
+    public void OpenHistory(string? windowId = null)
+    {
+        Bring(ref history, () => new HistoryWindow(service));
+        if (windowId != null)
+            history!.Select(windowId);
+    }
 
     public void OpenDetails() => Bring(ref details, () => new DetailsWindow(service, this));
 

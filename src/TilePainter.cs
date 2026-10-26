@@ -144,7 +144,21 @@ internal static class TilePainter
             };
             g.FillRectangle(light, bandRect);
         }
+        // Glass: a diagonal reflection band and a darker bottom edge.
+        float reflect = Math.Min(r.Width * 0.22f, 70 * r.Height / 96);
+        float sheenStart = r.X + r.Width * 0.12f;
+        using (var sheen = new SolidBrush(Color.FromArgb(14, 255, 255, 255)))
+            g.FillPolygon(sheen, [new PointF(sheenStart, r.Y), new PointF(sheenStart + reflect, r.Y), new PointF(sheenStart + reflect - r.Height * 0.6f, r.Bottom), new PointF(sheenStart - r.Height * 0.6f, r.Bottom)]);
+        var bottomBand = new RectangleF(r.X, r.Bottom - r.Height * 0.3f, r.Width, r.Height * 0.3f);
+        using (var shade = new LinearGradientBrush(RectangleF.Inflate(bottomBand, 0, 1), Color.FromArgb(0, 0, 0, 0), Color.FromArgb(40, 0, 0, 0), LinearGradientMode.Vertical))
+            g.FillRectangle(shade, bottomBand);
         g.Clip = clip;
+        // A bright top edge and a faint inner rim, as on real glass.
+        using (var edge = new Pen(Color.FromArgb(110, 255, 255, 255), Math.Max(1, radius / 12)))
+            g.DrawLine(edge, r.X + radius, r.Y + 1.2f, r.Right - radius, r.Y + 1.2f);
+        using (var rim = new Pen(Color.FromArgb(24, 255, 255, 255), 1))
+        using (var rimPath = Theme.RoundedRect(RectangleF.Inflate(r, -1.6f, -1.6f), Math.Max(0, radius - 1.6f)))
+            g.DrawPath(rim, rimPath);
     }
 
     /// <summary>

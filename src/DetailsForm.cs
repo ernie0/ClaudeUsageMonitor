@@ -1,26 +1,15 @@
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
-using System.Globalization;
 
 namespace ClaudeUsageMonitor;
 
-/// <summary>Every window as a coloured card with its reset time, burn rate and forecast spelled out.</summary>
+/// <summary>The details dashboard (layout in Core/DetailsPage.cs), hosted with scrolling, hover and clicks.</summary>
 internal sealed class DetailsForm : Form
 {
-    const string SourceClosed = "▸ 資料來源與紀錄位置";
-    const string SourceOpen = "▾ 收起資料來源";
-
     static DetailsForm? open;
 
     readonly MonitorService service;
-    readonly QuotaCards cards;
-    readonly FlowLayoutPanel info = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(14, 10, 14, 4), BackColor = Theme.Canvas };
-    readonly Label summary = new() { AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(0, 0, 0, 6) };
-    readonly Label sourceToggle = new() { AutoSize = true, Text = SourceClosed, ForeColor = Theme.Coral, Cursor = Cursors.Hand, Margin = new Padding(0, 2, 0, 4) };
-    readonly Label source = new() { AutoSize = true, ForeColor = Theme.Muted, Visible = false, Margin = new Padding(14, 0, 0, 4) };
-    readonly PillButton openFolder = Theme.Button("開啟紀錄資料夾");
-    readonly System.Windows.Forms.Timer ticker = new() { Interval = 30_000 };
-    readonly FlowLayoutPanel buttons;
+    readonly DashboardView view;
+    readonly Panel scroller = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = PageKit.PageTop };
 
     public static void Open(MonitorService service)
     {
@@ -36,266 +25,171 @@ internal sealed class DetailsForm : Form
     internal DetailsForm(MonitorService service)
     {
         this.service = service;
-        cards = new QuotaCards(service) { Dock = DockStyle.Top };
+        view = new DashboardView(service, this) { Location = Point.Empty };
         Text = "Claude 額度 · 詳情" + (service.Demo ? "（示範資料）" : "");
         Icon = AppIcon.Load();
-        BackColor = Theme.Canvas;
-        ForeColor = Theme.Text;
-        Font = Theme.Ui(10f);
+        BackColor = PageKit.PageTop;
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(880, 560);
-        MinimumSize = new Size(720, 420);
+        ClientSize = new Size(1320, 900);
+        MinimumSize = new Size(1080, 620);
 
-        buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10), BackColor = Theme.Canvas };
-        var close = Theme.Button("關閉");
-        close.Click += (_, _) => Close();
-        var refresh = Theme.Button("立即更新", primary: true);
-        refresh.Click += (_, _) =>
-        {
-            if (!service.Refresh(manual: true))
-                MessageBox.Show(this, "10 秒內只能手動更新一次。", "請稍候", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        };
-        var official = Theme.Button("官方用量頁");
-        official.Click += (_, _) => OverlayForm.OpenUrl("https://claude.ai/settings/usage");
-        var history = Theme.Button("使用紀錄");
-        history.Click += (_, _) => HistoryForm.Open(service);
-        var analysis = Theme.Button("用量分析");
-        analysis.Click += (_, _) => AnalysisForm.Open(service);
-        buttons.Controls.AddRange([close, refresh, official, history, analysis]);
-
-        // Where the data comes from is rarely needed, so it stays folded until asked for.
-        sourceToggle.Click += (_, _) => ToggleSource();
-        openFolder.Visible = false;
-        openFolder.Margin = new Padding(12, 2, 0, 4);
-        openFolder.Click += (_, _) => OverlayForm.OpenUrl(service.Root);
-        info.Controls.AddRange([summary, sourceToggle, source, openFolder]);
-        info.Resize += (_, _) => WrapText();
-
-        Controls.Add(info);
-        Controls.Add(cards);
-        Controls.Add(buttons);
+        scroller.Controls.Add(view);
+        scroller.Resize += (_, _) => view.Fit(scroller.ClientSize);
+        Controls.Add(scroller);
 
         Load += async (_, _) =>
         {
-            Render();
-            FitHeight();
-            cards.Animate();
+            view.Fit(scroller.ClientSize);
+            view.PlayIntro();
             await service.ScanTokensAsync(8);
             if (!IsDisposed)
-                Render();
+                view.Invalidate();
         };
         HandleCreated += (_, _) => Theme.ApplyWindowChrome(this);
-        ticker.Tick += (_, _) => Render();
-        ticker.Start();
-        service.Changed += OnServiceChanged;
-        FormClosed += (_, _) =>
+    }
+
+    internal DashboardView View => view;
+
+    internal void Act(string action)
+    {
+        switch (action)
         {
-            service.Changed -= OnServiceChanged;
-            ticker.Dispose();
-        };
-    }
-
-    void OnServiceChanged()
-    {
-        if (IsHandleCreated && !IsDisposed)
-            BeginInvoke(Render);
-    }
-
-    void ToggleSource()
-    {
-        bool show = !source.Visible;
-        source.Visible = show;
-        openFolder.Visible = show;
-        sourceToggle.Text = show ? SourceOpen : SourceClosed;
-        FitHeight();
-    }
-
-    void WrapText()
-    {
-        var width = new Size(Math.Max(200, info.ClientSize.Width - info.Padding.Horizontal - 20), 0);
-        summary.MaximumSize = width;
-        source.MaximumSize = width;
-    }
-
-    /// <summary>Sizes the window so every card and the visible info fit without scrolling.</summary>
-    void FitHeight()
-    {
-        WrapText();
-        int text = info.Controls.Cast<Control>().Where(c => c.Visible)
-            .Sum(c => c.GetPreferredSize(new Size(c.MaximumSize.Width, 0)).Height + c.Margin.Vertical);
-        int needed = cards.Height + text + info.Padding.Vertical + buttons.Height + 12;
-        int limit = Screen.FromControl(this).WorkingArea.Height - 80;
-        ClientSize = new Size(ClientSize.Width, Math.Clamp(needed, MinimumSize.Height - (Height - ClientSize.Height), limit));
-    }
-
-    void Render()
-    {
-        var snapshot = service.Current;
-        cards.Height = cards.PreferredHeight;
-        cards.Invalidate();
-
-        var lines = new List<string>();
-        if (snapshot != null)
-        {
-            lines.Add($"方案：{snapshot.PlanLabel}　資料時間：{snapshot.ObservedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}" + (service.Fresh ? "" : "（上次資料）"));
-            if (snapshot.Extra is { } extra)
-                lines.Add($"額外用量：{(extra.Enabled ? "已開啟" : "未開啟")}，本月 {Format.Money(extra.Used, extra.Currency)}／上限 {Format.Money(extra.MonthlyLimit, extra.Currency)}");
+            case "refresh":
+                if (!service.Refresh(manual: true))
+                    MessageBox.Show(this, "10 秒內只能手動更新一次。", "請稍候", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                break;
+            case "history":
+                HistoryForm.Open(service);
+                break;
+            case "analysis":
+                AnalysisForm.Open(service);
+                break;
+            case "official":
+                OverlayForm.OpenUrl("https://claude.ai/settings/usage");
+                break;
+            case "folder":
+                OverlayForm.OpenUrl(service.Root);
+                break;
+            case "source":
+                view.ToggleSource();
+                view.Fit(scroller.ClientSize);
+                break;
+            default:
+                if (action.StartsWith("card:") || action.StartsWith("row:"))
+                    HistoryForm.Open(service, action[(action.IndexOf(':') + 1)..]);
+                break;
         }
-        lines.Add("狀態：" + service.Status
-            + (service.NextPoll is { } next && !service.Busy ? $"　下次更新 {next.ToLocalTime():HH:mm:ss}" : "")
-            + (service.SlowedDown ? "（額度沒有變化，自動放慢）" : ""));
-        lines.Add("使用速度是工具開著時的觀察推估，不是官方數字；重置時間由官方回報。");
-        summary.Text = string.Join("\n", lines);
-
-        source.Text = "資料來源：" + (service.ClaudePath.Length > 0 ? service.ClaudePath : "尚未找到 Claude Code")
-            + (snapshot?.ClaudeVersion is { Length: > 0 } v ? $"（Claude Code {v}）" : "")
-            + "\n紀錄位置：" + service.Root;
     }
 }
 
-/// <summary>One row per window: the coloured tile on the left, the facts on the right.</summary>
-internal sealed class QuotaCards : Control
+/// <summary>Draws the dashboard with GDI+; hover highlights what is clickable, rings sweep in on open.</summary>
+internal sealed class DashboardView : Control
 {
-    const float RowH = 104, RowGap = 10, Margin_ = 12, TileWidth = 250;
-
     readonly MonitorService service;
+    readonly DetailsForm owner;
+    readonly PageState state = new();
     readonly System.Windows.Forms.Timer frame = new() { Interval = 16 };
-    readonly Stopwatch clock = new();
-    FontSet? fonts;
-    float progress = 1;
+    readonly System.Windows.Forms.Timer ticker = new() { Interval = 30_000 };
+    readonly Stopwatch intro = new();
+    Size viewport;
 
-    public QuotaCards(MonitorService service)
+    public DashboardView(MonitorService service, DetailsForm owner)
     {
         this.service = service;
+        this.owner = owner;
         DoubleBuffered = true;
-        BackColor = Theme.Canvas;
-        Font = Theme.Ui(9.5f);
-        SetStyle(ControlStyles.ResizeRedraw, true);
+        BackColor = PageKit.PageTop;
         frame.Tick += (_, _) =>
         {
-            double t = Math.Min(1, clock.ElapsedMilliseconds / 800.0);
-            progress = (float)(1 - Math.Pow(1 - t, 3));
+            double t = Math.Min(1, intro.ElapsedMilliseconds / 900.0);
+            state.Intro = (float)(1 - Math.Pow(1 - t, 3));
             Invalidate();
             if (t >= 1)
             {
                 frame.Stop();
-                clock.Reset();
+                intro.Reset();
             }
+        };
+        ticker.Tick += (_, _) => Invalidate();
+        ticker.Start();
+        Action onChanged = () =>
+        {
+            if (IsHandleCreated && !IsDisposed)
+                BeginInvoke(() => Fit(viewport));
+        };
+        service.Changed += onChanged;
+        Disposed += (_, _) =>
+        {
+            service.Changed -= onChanged;
+            frame.Dispose();
+            ticker.Dispose();
         };
     }
 
     float UiScale => DeviceDpi / 96f;
 
-    public int PreferredHeight
+    public void Fit(Size client)
     {
-        get
-        {
-            int count = Math.Max(1, service.Current?.Windows.Count ?? 1);
-            return (int)((Margin_ + count * (RowH + RowGap)) * UiScale);
-        }
+        viewport = client;
+        int height = (int)Math.Ceiling(DetailsPage.Height(service, state) * UiScale);
+        Size = new Size(client.Width, Math.Max(client.Height, height));
+        Invalidate();
     }
 
-    /// <summary>Rings sweep up from zero when the window opens.</summary>
-    public void Animate()
+    public void PlayIntro()
     {
         if (!Theme.AnimationsEnabled)
             return;
-        progress = 0;
-        clock.Restart();
+        state.Intro = 0;
+        intro.Restart();
         frame.Start();
     }
 
-    protected override void Dispose(bool disposing)
+    /// <summary>Finishes the intro at once; used by --screenshot.</summary>
+    public void Settle()
     {
-        if (disposing)
-        {
-            frame.Dispose();
-            fonts?.Dispose();
-        }
-        base.Dispose(disposing);
+        frame.Stop();
+        state.Intro = 1;
+        Invalidate();
     }
+
+    public void ToggleSource() => state.SourceOpen = !state.SourceOpen;
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.Clear(Theme.Canvas);
         TilePainter.Prepare(g);
-        float s = UiScale;
-        if (fonts == null || Math.Abs(fonts.Scale - s) > 0.001f)
-        {
-            fonts?.Dispose();
-            fonts = new FontSet(s);
-        }
-        var now = DateTimeOffset.UtcNow;
-        var snapshot = service.Current;
-        if (snapshot == null)
-        {
-            var r = new RectangleF(Margin_ * s, Margin_ * s, Width - Margin_ * 2 * s, RowH * s);
-            TilePainter.Pill(g, r with { Height = 34 * s }, Insights.Build(service, now), fonts);
-            return;
-        }
+        using var paint = new GdiPaint(g, UiScale);
+        DetailsPage.Render(paint, Width / UiScale, Height / UiScale, service, state, DateTimeOffset.UtcNow);
+    }
 
-        float y = Margin_ * s;
-        foreach (var w in snapshot.Windows)
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        string? hit = state.HitAt(new PointF(e.X / UiScale, e.Y / UiScale));
+        Cursor = hit != null ? Cursors.Hand : Cursors.Default;
+        if (hit != state.Hover)
         {
-            var level = Levels.Of(w.RemainingPercent, service.Settings);
-            var forecast = service.Forecasts.GetValueOrDefault(w.Id) ?? Forecast.Empty;
-            var tile = new RectangleF(Margin_ * s, y, TileWidth * s, RowH * s);
-            TilePainter.Tile(g, tile, new TileModel(Insights.Title(w), Insights.Icon(w), w.RemainingPercent * progress, level,
-                Levels.Word(level, w.RemainingPercent), Format.ShortCountdown(w.ResetsAt, now), $"已使用 {w.UsedPercent:0}%"), fonts);
-
-            var panel = RectangleF.FromLTRB(tile.Right + 10 * s, y, Width - Margin_ * s, y + RowH * s);
-            using (var path = Theme.RoundedRect(panel, 14 * s))
-            using (var back = new SolidBrush(Theme.Surface))
-            using (var edge = new Pen(Theme.Border))
-            {
-                g.FillPath(back, path);
-                g.DrawPath(edge, path);
-            }
-
-            var facts = new List<(string Key, string Value, Color Color)>
-            {
-                ("重置時間", w.ResetsAt is { } r ? Format.ResetAt(r, now) : "未提供", Theme.Text),
-                ("還有", w.ResetsAt is { } r2 && r2 > now ? Format.Duration(r2 - now) : "—", Theme.Text),
-                ("使用速度", w.RemainingPercent <= 0 ? "—" : forecast.RatePerHour is { } rate ? $"{Format.Rate(rate)}（{Format.Basis(forecast.BasisMinutes)}）" : "觀察中", Theme.Text),
-                ("照目前速度", Outlook(w, forecast, now, out var outlookColor), outlookColor),
-                ("每小時可用", forecast.BudgetPerHour is { } budget && w.RemainingPercent > 0 ? $"{Format.Rate(budget)} 以下就撐得到重置" : "—", Theme.Text),
-                ("本期 Token", Insights.PeriodTokens(service, w, now), Theme.Text),
-            };
-            float colW = (panel.Width - 28 * s) / 2;
-            for (int i = 0; i < facts.Count; i++)
-            {
-                float fx = panel.X + 16 * s + (i % 2) * colW;
-                float fy = panel.Y + 12 * s + (i / 2) * 28 * s;
-                using var key = new SolidBrush(Theme.Muted);
-                using var value = new SolidBrush(facts[i].Color);
-                g.DrawString(facts[i].Key, fonts.Small, key, new PointF(fx, fy + 2 * s));
-                g.DrawString(facts[i].Value, fonts.Label, value, new RectangleF(fx + 74 * s, fy, colW - 80 * s, 20 * s),
-                    new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap });
-            }
-            y += (RowH + RowGap) * s;
+            state.Hover = hit;
+            Invalidate();
         }
     }
 
-    static string Outlook(QuotaWindow w, Forecast forecast, DateTimeOffset now, out Color color)
+    protected override void OnMouseLeave(EventArgs e)
     {
-        if (w.RemainingPercent <= 0)
+        base.OnMouseLeave(e);
+        if (state.Hover != null)
         {
-            color = Theme.Danger;
-            return "已用完，等待重置";
+            state.Hover = null;
+            Invalidate();
         }
-        if (forecast.ExhaustsBeforeReset && forecast.ExhaustAt is { } at)
-        {
-            color = Theme.Warning;
-            return Format.ResetAt(at, now) + " 用完（早於重置）";
-        }
-        if (forecast.RatePerHour is not null)
-        {
-            color = Theme.Good;
-            return "撐得到重置";
-        }
-        color = Theme.Muted;
-        return "還在觀察";
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button == MouseButtons.Left && state.HitAt(new PointF(e.X / UiScale, e.Y / UiScale)) is { } action)
+            owner.Act(action);
     }
 }

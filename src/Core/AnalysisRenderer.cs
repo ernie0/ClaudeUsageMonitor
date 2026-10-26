@@ -11,12 +11,22 @@ internal enum TextAlign { Left, Center, Right }
 internal interface IPaint
 {
     void Fill(RectangleF r, Color color, float radius = 0);
-    void Gradient(RectangleF r, Color start, Color end, float radius = 0);
+    void Gradient(RectangleF r, Color start, Color end, float radius = 0, bool vertical = false);
     /// <summary>The vivid quota block used everywhere else in the app.</summary>
     void Block(RectangleF r, Level level, float radius);
+    void Stroke(RectangleF r, Color color, float width, float radius = 0);
     void Line(PointF a, PointF b, Color color, float width, bool dashed = false);
+    void Circle(PointF center, float radius, Color? fill, Color? stroke = null, float strokeWidth = 1);
+    /// <summary>A round-capped arc; degrees clockwise from 3 o'clock.</summary>
+    void Arc(PointF center, float radius, float startDegrees, float sweepDegrees, Color color, float width);
+    void Polyline(IReadOnlyList<PointF> points, Color color, float width);
+    void Polygon(IReadOnlyList<PointF> points, Color fill);
+    /// <summary>Fills under a line down to <paramref name="baseline"/> with a top-to-bottom gradient.</summary>
+    void Area(IReadOnlyList<PointF> points, float baseline, Color top, Color bottom);
     void Text(string text, RectangleF r, float points, Color color, bool bold = false, TextAlign align = TextAlign.Left, int maxLines = 1, bool middle = false);
     float Measure(string text, float points, bool bold = false);
+    /// <summary>Limits drawing to a rounded rectangle until the returned scope is disposed.</summary>
+    IDisposable Clip(RectangleF r, float radius);
 }
 
 /// <summary>Tokens for the analysis: the selected range, per day, per model, and the current quota periods.</summary>
@@ -93,6 +103,8 @@ internal static class AnalysisRenderer
 
     public static float Render(IPaint p, float width, UsageAnalysis a, TokenReport tokens, UsageBehaviors? behaviors, bool analyzing, Settings settings)
     {
+        // Tall enough for any range; the host scrolls whatever the page uses.
+        PageKit.Background(p, width, 1700);
         float w = width - M * 2;
         float y = M;
         y = Cards(p, a, tokens, M, y, w) + Gap * 1.5f;
@@ -129,7 +141,7 @@ internal static class AnalysisRenderer
         {
             var c = cards[i];
             var r = new RectangleF(x + i * (cardW + Gap), y, cardW, H);
-            p.Block(r, c.Level, 14);
+            PageKit.Card(p, r, c.Level, 16, false);
             p.Text(c.Title, new RectangleF(r.X + 12, r.Y + 10, r.Width - 24, 18), 9.5f, Color.White, bold: true);
             p.Text(c.Value, new RectangleF(r.X + 12, r.Y + 30, r.Width - 24, 28), 15f, Color.White, bold: true);
             p.Text(c.Note, new RectangleF(r.X + 12, r.Y + 62, r.Width - 24, 34), 8.5f, Color.FromArgb(0xF3, 0xF1, 0xFF), maxLines: 2);
@@ -142,7 +154,7 @@ internal static class AnalysisRenderer
         y = Section(p, "每日用量", $"每天用掉本週額度幾個百分點；虛線是平均分配（{UsageAnalyzer.DailyBudget:0.#} 點／天），下方是當天 Token；* 表示有一部分發生在工具沒開時", x, y, w);
         const float H = 220;
         var area = new RectangleF(x, y, w, H);
-        p.Fill(area, AnalysisPalette.Surface, 12);
+        PageKit.Panel(p, area, 16);
         var plot = RectangleF.FromLTRB(area.Left + 44, area.Top + 22, area.Right - 14, area.Bottom - 44);
         double max = Math.Max(UsageAnalyzer.DailyBudget * 1.6, a.Days.Count == 0 ? 0 : a.Days.Max(d => d.Weekly) * 1.1);
         float Y(double v) => plot.Bottom - (float)(v / max) * plot.Height;
@@ -188,7 +200,7 @@ internal static class AnalysisRenderer
         y = Section(p, "常用時段", "顏色越亮代表那個時段用掉越多本週額度", x, y, w);
         const float H = 214;
         var area = new RectangleF(x, y, w, H);
-        p.Fill(area, AnalysisPalette.Surface, 12);
+        PageKit.Panel(p, area, 16);
         var grid = RectangleF.FromLTRB(area.Left + 30, area.Top + 14, area.Right - 12, area.Bottom - 26);
         float cw = grid.Width / 24, ch = grid.Height / 7;
         double max = 0;
@@ -216,7 +228,7 @@ internal static class AnalysisRenderer
         y = Section(p, "本週額度週期回顧", "", x, y, w);
         const float H = 214;
         var area = new RectangleF(x, y, w, H);
-        p.Fill(area, AnalysisPalette.Surface, 12);
+        PageKit.Panel(p, area, 16);
         if (a.WeeklyCycles.Count == 0)
         {
             p.Text("還沒有完整的週期紀錄", area, 10, AnalysisPalette.Muted, align: TextAlign.Center, middle: true);
@@ -246,7 +258,7 @@ internal static class AnalysisRenderer
         y = Section(p, "Token 用量", $"這台電腦上 Claude Code 的紀錄 · {t.Status}", x, y, w);
         int modelRows = Math.Max(1, Math.Min(5, t.Models.Count));
         var area = new RectangleF(x, y, w, 12 + 58 + 12 + 26 + modelRows * 24 + 26 + 4);
-        p.Fill(area, AnalysisPalette.Surface, 12);
+        PageKit.Panel(p, area, 16);
         float inner = y + 12;
 
         // The four kinds, as coloured chips with their share of the range.

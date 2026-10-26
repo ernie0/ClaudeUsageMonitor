@@ -84,7 +84,25 @@ internal static class MacDraw
                 };
                 ctx.DrawRectangle(light, null, new Rect(x, r.Top, band, r.Height));
             }
+            // Glass: a diagonal reflection band and a darker bottom edge.
+            double reflect = Math.Min(r.Width * 0.22, 70);
+            double sheenStart = r.X + r.Width * 0.12;
+            var sheen = new StreamGeometry();
+            using (var g = sheen.Open())
+            {
+                g.BeginFigure(new Point(sheenStart, r.Y), true);
+                g.LineTo(new Point(sheenStart + reflect, r.Y));
+                g.LineTo(new Point(sheenStart + reflect - r.Height * 0.6, r.Bottom));
+                g.LineTo(new Point(sheenStart - r.Height * 0.6, r.Bottom));
+                g.EndFigure(true);
+            }
+            ctx.DrawGeometry(MacTheme.Solid(Color.FromArgb(14, 255, 255, 255)), null, sheen);
+            ctx.DrawRectangle(MacTheme.Vertical(Color.FromArgb(0, 0, 0, 0), Color.FromArgb(40, 0, 0, 0)), null,
+                new Rect(r.X, r.Bottom - r.Height * 0.3, r.Width, r.Height * 0.3));
         }
+        // A bright top edge and a faint inner rim, as on real glass.
+        ctx.DrawLine(new Pen(MacTheme.Solid(Color.FromArgb(110, 255, 255, 255)), 1.2), new Point(r.X + radius, r.Y + 1.2), new Point(r.Right - radius, r.Y + 1.2));
+        ctx.DrawRectangle(null, new Pen(MacTheme.Solid(Color.FromArgb(24, 255, 255, 255)), 1), r.Deflate(1.6), Math.Max(0, radius - 1.6), Math.Max(0, radius - 1.6));
     }
 
     /// <summary>White progress ring: the filled arc is what is left.</summary>

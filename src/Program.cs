@@ -109,8 +109,21 @@ internal static class Program
             using var icon = OverlayForm.RenderTrayBitmap(value, level, 32);
             icon.Save(Path.Combine(folder, $"tray-{name}.png"), ImageFormat.Png);
         }
-        Capture(new HistoryForm(service), Path.Combine(folder, "history.png"));
-        Capture(new DetailsForm(service), Path.Combine(folder, "details.png"));
+        using (var history = new HistoryForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) })
+        {
+            history.Show();
+            Application.DoEvents();
+            history.Settle();
+            Grab(history, Path.Combine(folder, "history.png"));
+            history.Close();
+        }
+        using (var details = new DetailsForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) })
+        {
+            details.Show();
+            details.View.Settle();
+            Grab(details, Path.Combine(folder, "details.png"));
+            details.Close();
+        }
         var analysis = new AnalysisForm(service) { StartPosition = FormStartPosition.Manual, Location = new Point(40, 40) };
         analysis.Show();
         analysis.PrepareAsync().GetAwaiter().GetResult();

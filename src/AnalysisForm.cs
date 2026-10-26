@@ -9,7 +9,7 @@ internal sealed class AnalysisForm : Form
 
     readonly MonitorService service;
     readonly AnalysisView view;
-    readonly Panel scroller = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Canvas };
+    readonly Panel scroller = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = PageKit.PageTop };
     readonly List<PillButton> rangeButtons = [];
     readonly PillButton reanalyze = Theme.Button("重新分析", primary: true);
     int days = 7;
@@ -31,15 +31,15 @@ internal sealed class AnalysisForm : Form
         view = new AnalysisView(service) { Location = Point.Empty };
         Text = "Claude 額度 · 用量分析" + (service.Demo ? "（示範資料）" : "");
         Icon = AppIcon.Load();
-        BackColor = Theme.Canvas;
+        BackColor = PageKit.PageTop;
         ForeColor = Theme.Text;
         Font = Theme.Ui(9.5f);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(1000, 780);
+        ClientSize = new Size(1080, 820);
         MinimumSize = new Size(820, 560);
 
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10, 10, 10, 4), BackColor = Theme.Canvas };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10, 10, 10, 4), BackColor = PageKit.PageTop };
         foreach (int range in new[] { 7, 30 })
         {
             var button = Theme.Button($"近 {range} 天");
@@ -184,14 +184,94 @@ internal sealed class GdiPaint(Graphics g, float scale) : IPaint, IDisposable
         g.FillPath(brush, path);
     }
 
-    public void Gradient(RectangleF r, Color start, Color end, float radius = 0)
+    public void Gradient(RectangleF r, Color start, Color end, float radius = 0, bool vertical = false)
     {
         var area = S(r);
         if (area.Width < 1 || area.Height < 1)
             return;
-        using var brush = new LinearGradientBrush(area, start, end, LinearGradientMode.Horizontal);
+        // Inflate the brush rectangle by a pixel so GDI+ does not wrap the gradient at the edges.
+        var brushArea = RectangleF.Inflate(area, 1, 1);
+        using var brush = new LinearGradientBrush(brushArea, start, end, vertical ? LinearGradientMode.Vertical : LinearGradientMode.Horizontal);
         using var path = Theme.RoundedRect(area, radius * scale);
         g.FillPath(brush, path);
+    }
+
+    public void Stroke(RectangleF r, Color color, float width, float radius = 0)
+    {
+        using var pen = new Pen(color, width * scale);
+        using var path = Theme.RoundedRect(S(r), radius * scale);
+        g.DrawPath(pen, path);
+    }
+
+    public void Circle(PointF c, float radius, Color? fill, Color? stroke = null, float strokeWidth = 1)
+    {
+        var r = new RectangleF((c.X - radius) * scale, (c.Y - radius) * scale, radius * 2 * scale, radius * 2 * scale);
+        if (fill is { } f)
+        {
+            using var brush = new SolidBrush(f);
+            g.FillEllipse(brush, r);
+        }
+        if (stroke is { } s)
+        {
+            using var pen = new Pen(s, strokeWidth * scale);
+            g.DrawEllipse(pen, r);
+        }
+    }
+
+    public void Arc(PointF c, float radius, float startDegrees, float sweepDegrees, Color color, float width)
+    {
+        if (Math.Abs(sweepDegrees) < 0.1f)
+            return;
+        using var pen = new Pen(color, width * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawArc(pen, (c.X - radius) * scale, (c.Y - radius) * scale, radius * 2 * scale, radius * 2 * scale, startDegrees, sweepDegrees);
+    }
+
+    public IDisposable Clip(RectangleF r, float radius)
+    {
+        var previous = g.Clip;
+        using (var path = Theme.RoundedRect(S(r), radius * scale))
+            g.SetClip(path, CombineMode.Intersect);
+        return new Restore(() =>
+        {
+            g.Clip = previous;
+            previous.Dispose();
+        });
+    }
+
+    sealed class Restore(Action action) : IDisposable
+    {
+        public void Dispose() => action();
+    }
+
+    PointF[] Scaled(IReadOnlyList<PointF> points) => points.Select(p => new PointF(p.X * scale, p.Y * scale)).ToArray();
+
+    public void Polyline(IReadOnlyList<PointF> points, Color color, float width)
+    {
+        if (points.Count < 2)
+            return;
+        using var pen = new Pen(color, width * scale) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawLines(pen, Scaled(points));
+    }
+
+    public void Polygon(IReadOnlyList<PointF> points, Color fill)
+    {
+        if (points.Count < 3)
+            return;
+        using var brush = new SolidBrush(fill);
+        g.FillPolygon(brush, Scaled(points));
+    }
+
+    public void Area(IReadOnlyList<PointF> points, float baseline, Color top, Color bottom)
+    {
+        if (points.Count < 2)
+            return;
+        var outline = Scaled(points).ToList();
+        outline.Add(new PointF(outline[^1].X, baseline * scale));
+        outline.Add(new PointF(outline[0].X, baseline * scale));
+        float minY = outline.Min(p => p.Y);
+        var bounds = RectangleF.FromLTRB(outline.Min(p => p.X), minY - 1, outline.Max(p => p.X) + 1, baseline * scale + 1);
+        using var brush = new LinearGradientBrush(bounds, top, bottom, LinearGradientMode.Vertical);
+        g.FillPolygon(brush, outline.ToArray());
     }
 
     public void Block(RectangleF r, Level level, float radius)
