@@ -1,13 +1,13 @@
 # ClaudeUsageMonitor｜Claude 額度小幫手
 
-在 Windows 桌面放一個小浮窗，隨時看 **Claude 訂閱方案的 5 小時額度、每週額度、各模型每週額度還剩多少、什麼時候重置、照目前速度會不會在重置前用完**。工具開著時會累積使用曲線，可匯出 CSV。
+在 Windows 或 Mac 桌面放一個小浮窗，隨時看 **Claude 訂閱方案的 5 小時額度、每週額度、各模型每週額度還剩多少、什麼時候重置、照目前速度會不會在重置前用完**。工具開著時會累積使用曲線，可匯出 CSV。
 
 這是**非官方工具**，不是 Anthropic 的產品，也未受其背書。不會幫你增加額度，也不會替你送出任何提問。設計參考 [hayabusasean/CodexUsageMonitor](https://github.com/hayabusasean/CodexUsageMonitor)（MIT），是它的 Claude 版本。
 
 ## 適合誰
 
-- Windows 10／11（64 位元）。
-- 電腦上已安裝**官方 Claude Code**（原生安裝程式或 WinGet 版的 `claude.exe`），而且用 **Claude Pro／Max／Team 訂閱帳號登入**。
+- Windows 10／11（64 位元），或 **macOS 14 Sonoma 以上**（Apple Silicon 與 Intel 各有一個版本，見下方「Mac 版」）。
+- 電腦上已安裝**官方 Claude Code**（Windows：原生安裝程式或 WinGet 版的 `claude.exe`；Mac：官方安裝程式或 Homebrew 版的 `claude`），而且用 **Claude Pro／Max／Team 訂閱帳號登入**。
 - 只用 API 金鑰、Bedrock、Vertex 等登入方式沒有「方案額度」，本工具會顯示原因後停止查詢。
 - 只在瀏覽器登入 claude.ai 不夠；本工具是透過電腦上的 Claude Code 查詢。
 
@@ -56,6 +56,24 @@
 | 開機自動啟動 | 設定 →「登入 Windows 時自動啟動」（寫入目前使用者的啟動項目，不需要系統管理員）。 |
 | 更新 | 先從選單「離開」，用新版 exe 覆蓋舊檔再開啟。設定與紀錄存在 `%LOCALAPPDATA%\ClaudeUsageMonitor`，不在 exe 旁邊，更新不會動到。 |
 | 移除 | 先在設定取消開機自動啟動、從選單「離開」，再刪除程式資料夾；要連紀錄一起刪就刪 `%LOCALAPPDATA%\ClaudeUsageMonitor`。 |
+
+## Mac 版
+
+畫面、顏色、動畫與功能都和 Windows 版相同；系統匣數字改在螢幕上方的**選單列**，不會出現在 Dock。
+
+| 項目 | 說明 |
+| --- | --- |
+| 下載哪一個 | 蘋果選單 →「關於這台 Mac」：晶片寫 Apple M1／M2／M3／M4… 用 `ClaudeUsageMonitor-v0.1.1-macos-arm64.zip`；寫 Intel 用 `…-macos-x64.zip`。可對照 `.sha256` 檔核對。 |
+| 安裝 | 連按兩下 zip 解壓縮，把 `ClaudeUsageMonitor.app` 拖到「應用程式」資料夾。 |
+| 第一次開啟 | 這個 App 沒有 Apple 開發者簽署，第一次開會被擋。到「系統設定 → 隱私權與安全性」往下找到 ClaudeUsageMonitor，按「強制打開／仍要打開」，之後就能正常開。也可以在「終端機」貼上 `xattr -dr com.apple.quarantine /Applications/ClaudeUsageMonitor.app` 後再開。 |
+| 開啟後 | 選單列出現彩色數字圖示，浮窗在螢幕右上角。在浮窗按右鍵（或按住 Control 點一下）開選單；點選單列圖示也有同樣的選單。 |
+| 開機自動啟動 | 設定 →「登入時自動啟動」（寫入 `~/Library/LaunchAgents`，macOS 會顯示「已新增背景項目」）。 |
+| 資料位置 | `~/Library/Application Support/ClaudeUsageMonitor`。 |
+| 通知 | 透過 macOS 通知中心；來源會顯示為「指令碼編寫程式」，第一次可能要在「系統設定 → 通知」允許。 |
+| claude 簽章 | 會用 macOS 的 `codesign` 確認 claude 是 Anthropic 簽署的。有使用者回報 macOS 26 上部分版本的完整性檢查會失敗；這時只要簽章仍標示 Anthropic 的開發者編號就照常使用，並在「額度詳情」顯示一行警告。 |
+| 移除 | 先在設定取消「登入時自動啟動」，從選單「離開」，再把 App 丟到垃圾桶；要連紀錄一起刪就刪上面的資料位置。 |
+
+排錯：在「終端機」執行 `/Applications/ClaudeUsageMonitor.app/Contents/MacOS/ClaudeUsageMonitor --probe ~/Desktop/claude-probe.json`，會實際查詢一次並把結果寫到桌面（不含 email，只有額度與錯誤代碼）。
 
 ## 怎麼用
 
@@ -114,15 +132,20 @@
 
 - `get_usage` 是 Claude Code 標示為「實驗性」的介面，日後 Claude Code 改版可能改變格式；改變時工具會顯示「回應無法辨識」而不是顯示錯的數字。
 - 燒速與「何時用完」是觀察推估，不是官方數字；關機、休眠或工具關閉期間不會補資料（圖上以斜線標示「未監測」）。
-- 只支援原生 `claude.exe`；如果 Claude Code 是用 npm 安裝的 Node 版本、沒有 `claude.exe`，請在設定指定 `claude.exe` 位置或改用官方安裝程式。
+- 只支援原生 `claude.exe`（Mac 為原生 `claude`）；如果 Claude Code 是用 npm 安裝的 Node 版本，請在設定指定原生執行檔位置或改用官方安裝程式。
+- Mac 版目前只在 Windows 上用同一份程式驗證過畫面與查詢流程，尚未在 Mac 實機確認；App 本身沒有 Apple 開發者簽署。
 
 ## 給開發者
 
 ```powershell
-# 需要 .NET 10 SDK
-dotnet build src\ClaudeUsageMonitor.csproj
-.\build.ps1                     # 發佈自帶執行環境的單一 exe，產生 dist\ClaudeUsageMonitor-v<版本>-win-x64.zip 與 .sha256
+# 需要 .NET 10 SDK（Mac 版也在 Windows 上建置與打包）
+dotnet build src\ClaudeUsageMonitor.csproj        # Windows 版（WinForms）
+dotnet build mac\ClaudeUsageMonitor.Mac.csproj    # Mac 版（Avalonia，也能在 Windows 上執行測試）
+.\build.ps1                     # Windows：自帶執行環境的單一 exe → dist\ClaudeUsageMonitor-v<版本>-win-x64.zip
+.\build-mac.ps1                 # Mac：Apple Silicon 與 Intel 的 .app → dist\ClaudeUsageMonitor-v<版本>-macos-arm64.zip / -x64.zip
 ```
+
+兩個版本共用 `src\Core`（查詢、解析、紀錄、預估、提醒、白話結論），只有畫面分開：Windows 在 `src\`，Mac 在 `mac\`。
 
 | 參數 | 用途 |
 | --- | --- |

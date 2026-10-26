@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- macOS version (Avalonia). Shares src/Core with the Windows app; also runs on Windows for testing. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ClaudeUsageMonitor</RootNamespace>
+    <AssemblyName>ClaudeUsageMonitor</AssemblyName>
+    <Version>0.1.1</Version>
+    <Product>ClaudeUsageMonitor</Product>
+    <Description>Claude 額度小幫手（非官方）</Description>
+    <Copyright>Copyright (c) 2026 ernie0</Copyright>
+    <SatelliteResourceLanguages>zh-Hant</SatelliteResourceLanguages>
+    <ApplicationIcon>..\src\Assets\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\src\Core\**\*.cs" LinkBase="Core" />
+    <EmbeddedResource Include="..\src\Assets\app.ico" LogicalName="ClaudeUsageMonitor.app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.22" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.22" />
+  </ItemGroup>
+
+</Project>
